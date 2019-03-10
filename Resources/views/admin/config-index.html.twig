@@ -1,0 +1,149 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+    <!-- when using the mode "code", it's important to specify charset utf-8 -->
+    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+
+    <link href="/bundles/pimcoreconfiguration/js/jsoneditor/dist/jsoneditor.min.css" rel="stylesheet" type="text/css">
+    <script src="/bundles/pimcoreconfiguration/js/jsoneditor/dist/jsoneditor.min.js"></script>
+</head>
+<style>
+    div#jsoneditor {
+        border: none;
+        position: absolute;
+        width: 100%;
+        height: calc(100% - 50px);
+        /*background-color: green;*/
+    }
+
+    .menu {
+        height: 50px;
+        /*background: yellow;*/
+        display: flex;
+        align-items: center;
+    }
+
+    .menu-item {
+        margin-right: 15px;
+    }
+</style>
+<body style="margin: 0;">
+<div class="menu">
+    <div class="menu-item">
+        <label for="site">
+            {{ "lukaschel.pimcoreconfigurationbundle.site"|trans }}:
+        </label>
+        <select id="site" onchange="onChange()">
+            {% for site in sites %}
+                <option value="{{ site.id }}">{{ site.domain }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="menu-item" id="language-item" style="display: none">
+        <label for="language">
+            {{ "lukaschel.pimcoreconfigurationbundle.language"|trans }}:
+        </label>
+        <select id="language" onchange="onChange()">
+            {% for id, language in languages %}
+                <option value="{{ id }}">{{ language }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="menu-item">
+        <button id="save-button" onclick="onSave()">{{ "Speichern"|trans }}</button>
+    </div>
+    <div class="menu-item">
+        <div id="save-output"></div>
+    </div>
+</div>
+<div id="jsoneditor"></div>
+<script>
+
+    window.addEventListener("load", function () {
+        initEditor('default', 0);
+    });
+
+    function onChange() {
+        var site = document.getElementById("site").value;
+
+        if(site != 'default') {
+            document.getElementById('language-item').style.display = 'block';
+        }
+        else {
+            document.getElementById('language-item').style.display = 'none';
+        }
+
+        var language = document.getElementById("language").value;
+        initEditor(site, language);
+    }
+
+    function initEditor(site, language) {
+        var container = document.getElementById('jsoneditor');
+
+        var options = {
+            name: 'configEditor',
+            mode: 'tree', // modes: ['code', 'form', 'text', 'tree', 'view'], // allowed modes
+        };
+
+        window.parent.Ext.Ajax.request({
+            url: "{{ path('pimcoreconfiguration_getconfig') }}",
+            method: 'POST',
+            params: {
+                bundleName: '{{ bundleName }}',
+                site: site,
+                language: language
+            },
+            success: function (response, opts) {
+                var data = JSON.parse(response.responseText);
+                if (window.editor != undefined) {
+                    window.editor.destroy();
+                }
+                window.editor = new JSONEditor(container, options, data.config);
+                window.editor.setName(data.site + ' - ' + data.language);
+            },
+
+            failure: function (response, opts) {
+                console.log('server-side failure with status code ' + response.status);
+            }
+        });
+    }
+
+    function onSave() {
+        var site = document.getElementById("site").value;
+        var language = document.getElementById("language").value;
+        saveConfig(site, language);
+    }
+
+    function saveConfig(site, language) {
+        window.parent.Ext.Ajax.request({
+            url: "{{ path('pimcoreconfiguration_saveconfig') }}",
+            method: 'POST',
+            dataType: 'json',
+            params: {
+                bundleName: '{{ bundleName }}',
+                site: site,
+                language: language,
+                config: JSON.stringify(window.editor.get())
+            },
+            success: function (response) {
+                var jsonObj = JSON.parse(response.responseText);
+                var output = document.getElementById('save-output');
+
+                if (jsonObj.success) {
+                    output.innerHTML = '<span style="color:green">{{ "lukaschel.pimcoreconfigurationbundle.message.saved"|trans }}</span>';
+                    setTimeout(function(){ output.innerHTML = '' }, 1000);
+                }
+                else {
+                    output.innerHTML = '<span style="color:red">{{ "lukaschel.pimcoreconfigurationbundle.message.save.error"|trans }}!</span>';
+                    setTimeout(function(){ output.innerHTML = '' }, 1000);
+                }
+            },
+
+            failure: function (response) {
+                console.log('server-side failure with status code ' + response.status);
+            }
+        });
+    }
+</script>
+</body>
+</html>

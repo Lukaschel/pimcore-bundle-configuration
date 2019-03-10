@@ -1,0 +1,5 @@
+pimcore_configuration:
+    resource: "@PimcoreConfigurationBundle/Controller/"
+    type:     annotation
+    prefix:   /
+

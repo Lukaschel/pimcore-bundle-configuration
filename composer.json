@@ -1,0 +1,28 @@
+{
+  "name": "lukaschel/pimcore-bundle-configuration",
+  "description": "Individual pimcore bundle configurations for sites and languages",
+  "type": "pimcore-bundle",
+  "license": "GPL-3.0-or-later",
+  "authors": [
+    {
+      "name": "Lukaschel",
+      "email": "lukaschel33@gmail.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Lukaschel\\PimcoreConfigurationBundle\\": ""
+    }
+  },
+  "extra": {
+    "pimcore": {
+      "bundles": [
+        "Lukaschel\\PimcoreConfigurationBundle\\PimcoreConfigurationBundle"
+      ]
+    }
+  },
+  "minimum-stability": "dev",
+  "require": {
+      "composer/installers": "^1.1"
+  }
+}

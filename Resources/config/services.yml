@@ -1,0 +1,42 @@
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        # automatically injects dependencies in your services
+        autowire: true
+        # automatically registers your services as commands, event subscribers, etc.
+        autoconfigure: true
+        # this means you cannot fetch services directly from the container via $container->get()
+        # if you need to do this, you can override this setting on individual services
+        public: false
+
+    # controllers are imported separately to make sure they're public
+    # and have a tag that allows actions to type-hint services
+    Lukaschel\PimcoreConfigurationBundle\Controller\:
+        resource: '../../Controller'
+        public: true
+        tags: ['controller.service_arguments']
+
+    # BundleConfiguration
+    Lukaschel\PimcoreConfigurationBundle\Configuration\Configuration: ~
+
+    # Lukaschel\PimcoreConfigurationBundle\Tool\Install script
+    Lukaschel\PimcoreConfigurationBundle\Tool\Install:
+        public: true
+        calls:
+            - [setConfiguration, ['@Lukaschel\PimcoreConfigurationBundle\Configuration\Configuration']]
+
+    lukaschel.bundleconfiguration:
+        class: Lukaschel\PimcoreConfigurationBundle\Components\BundleConfiguration
+        public: true
+        arguments:
+            - '@service_container'
+            - '@request_stack'
+            - '@pimcore.service.request.document_resolver'
+
+    # bundleconfiguration twig extension
+    twig.bundleconfiguration:
+        class: Lukaschel\PimcoreConfigurationBundle\Twig\Extension\BundleConfigurationExtension
+        arguments:
+            - '@service_container'
+        tags:
+            - { name: twig.extension }
