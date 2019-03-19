@@ -139,5 +139,6 @@ class BundleConfiguration
                 }
             }
         }
+        return false;
     }
 }
