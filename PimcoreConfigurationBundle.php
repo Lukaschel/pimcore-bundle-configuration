@@ -23,7 +23,7 @@ class PimcoreConfigurationBundle extends AbstractPimcoreBundle implements Depend
      */
     public function getVersion()
     {
-        return '1.0.0';
+        return '1.0.1';
     }
 
     /**
