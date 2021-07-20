@@ -32,7 +32,7 @@
 <div class="menu">
     <div class="menu-item">
         <label for="site">
-            {{ "lukaschel_pimcoreconfigurationbundle_site"|trans }}:
+            {{ text.site }}:
         </label>
         <select id="site" onchange="onChange()">
             {% for site in sites %}
@@ -42,7 +42,7 @@
     </div>
     <div class="menu-item" id="language-item" style="display: none">
         <label for="language">
-            {{ "lukaschel_pimcoreconfigurationbundle_language"|trans }}:
+            {{ text.language }}:
         </label>
         <select id="language" onchange="onChange()">
             {% for id, language in languages %}
@@ -129,11 +129,11 @@
                 var output = document.getElementById('save-output');
 
                 if (jsonObj.success) {
-                    output.innerHTML = '<span style="color:green">{{ "lukaschel_pimcoreconfigurationbundle_message_saved"|trans }}</span>';
+                    output.innerHTML = '<span style="color:green">{{ text.save_success }}</span>';
                     setTimeout(function(){ output.innerHTML = '' }, 1000);
                 }
                 else {
-                    output.innerHTML = '<span style="color:red">{{ "lukaschel_pimcoreconfigurationbundle_message_save_error"|trans }}!</span>';
+                    output.innerHTML = '<span style="color:red">{{ text.save_error }}!</span>';
                     setTimeout(function(){ output.innerHTML = '' }, 1000);
                 }
             },

@@ -10,7 +10,7 @@ namespace Lukaschel\PimcoreConfigurationBundle\Controller;
 
 use Lukaschel\PimcoreConfigurationBundle\Configuration\Configuration;
 use Lukaschel\PimcoreConfigurationBundle\Traits\ConfigurationTrait;
-use Pimcore\Controller\FrontendController;
+use Pimcore\Bundle\AdminBundle\Controller\AdminController;
 use Pimcore\Model\Site;
 use Pimcore\Tool;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -22,7 +22,7 @@ use Symfony\Component\Yaml\Yaml;
 /**
  * @Route("/admin/pimcoreconfiguration")
  */
-class AdminBundleConfigController extends FrontendController
+class AdminBundleConfigController extends AdminController
 {
     use ConfigurationTrait;
     
@@ -49,12 +49,13 @@ class AdminBundleConfigController extends FrontendController
             mkdir(Configuration::BUNDLES_CONFIG_FILE_PATH . '/' . $bundle->getName() . '/', 0755, true);
         }
 
-        return $this->renderTemplate(
+        return $this->render(
             '@PimcoreConfiguration/admin/config-index.html.twig',
             [
                 'bundleName' => $bundle->getName(),
                 'sites' => $this->getAllAvailableSites(),
                 'languages' => Tool::getValidLanguages(),
+                'text' => $this->getTranslations(),
             ]
         );
     }
@@ -109,10 +110,12 @@ class AdminBundleConfigController extends FrontendController
             if ($fileExists === true) {
                 $configSite = Yaml::parseFile($filePath);
 
-                if ($config['config'] && is_array($configSite)) {
-                    $config['config'] = array_replace_recursive($config['config'], $configSite);
-                } else if (is_array($configSite)) {
-                    $config['config'] = $configSite;
+                if (is_array($configSite)) {
+                    if ($config['config']) {
+                        $config['config'] = array_replace_recursive($config['config'], $configSite);
+                    } else {
+                        $config['config'] = $configSite;
+                    }
                 }
             }
         }
@@ -233,5 +236,15 @@ class AdminBundleConfigController extends FrontendController
         }
 
         return [false, null];
+    }
+
+    private function getTranslations(): array
+    {
+        return [
+            'site' => $this->trans('lukaschel_pimcoreconfigurationbundle_site'),
+            'language' => $this->trans('lukaschel_pimcoreconfigurationbundle_language'),
+            'save_success' => $this->trans('lukaschel_pimcoreconfigurationbundle_message_saved'),
+            'save_error' => $this->trans('lukaschel_pimcoreconfigurationbundle_message_save_error'),
+        ];
     }
 }
