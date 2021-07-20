@@ -1,108 +1,116 @@
-'use strict';
+'use strict'
 
-
-var Highlighter = require('./Highlighter');
-var History = require('./History');
-var SearchBox = require('./SearchBox');
-var ContextMenu = require('./ContextMenu');
-var TreePath = require('./TreePath');
-var Node = require('./Node');
-var ModeSwitcher = require('./ModeSwitcher');
-var util = require('./util');
-var autocomplete = require('./autocomplete');
-var translate = require('./i18n').translate;
-var setLanguages = require('./i18n').setLanguages;
-var setLanguage = require('./i18n').setLanguage;
+import { autocomplete } from './autocomplete'
+import { ContextMenu } from './ContextMenu'
+import { FocusTracker } from './FocusTracker'
+import { Highlighter } from './Highlighter'
+import { setLanguage, setLanguages, translate } from './i18n'
+import { createQuery, executeQuery } from './jmespathQuery'
+import { ModeSwitcher } from './ModeSwitcher'
+import { Node } from './Node'
+import { NodeHistory } from './NodeHistory'
+import { SearchBox } from './SearchBox'
+import { TreePath } from './TreePath'
+import {
+  addClassName,
+  addEventListener,
+  debounce,
+  getAbsoluteTop,
+  getSelectionOffset,
+  getWindow,
+  hasParentNode,
+  improveSchemaError,
+  isPromise,
+  isValidationErrorChanged,
+  isValidValidationError,
+  parse,
+  removeClassName,
+  removeEventListener,
+  selectContentEditable,
+  setSelectionOffset,
+  tryJsonRepair
+} from './util'
+import VanillaPicker from './vanilla-picker'
 
 // create a mixin with the functions for tree mode
-var treemode = {};
+const treemode = {}
 
 /**
  * Create a tree editor
  * @param {Element} container    Container element
- * @param {Object}  [options]    Object with options. available options:
- *                               {String} mode            Editor mode. Available values:
- *                                                        'tree' (default), 'view',
- *                                                        and 'form'.
- *                               {Boolean} search         Enable search box.
- *                                                        True by default
- *                               {Boolean} history        Enable history (undo/redo).
- *                                                        True by default
- *                               {function} onChange      Callback method, triggered
- *                                                        on change of contents
- *                               {String} name            Field name for the root node.
- *                               {boolean} escapeUnicode  If true, unicode
- *                                                        characters are escaped.
- *                                                        false by default.
- *                               {Object} schema          A JSON Schema for validation
+ * @param {Object} [options]   Object with options. See docs for details.
  * @private
  */
 treemode.create = function (container, options) {
   if (!container) {
-    throw new Error('No container element provided.');
+    throw new Error('No container element provided.')
   }
-  this.container = container;
-  this.dom = {};
-  this.highlighter = new Highlighter();
-  this.selection = undefined; // will hold the last input selection
+  this.container = container
+  this.dom = {}
+  this.highlighter = new Highlighter()
+  this.selection = undefined // will hold the last input selection
   this.multiselection = {
     nodes: []
-  };
-  this.validateSchema = null; // will be set in .setSchema(schema)
-  this.errorNodes = [];
+  }
+  this.validateSchema = null // will be set in .setSchema(schema)
+  this.validationSequence = 0
+  this.errorNodes = []
+  this.lastSchemaErrors = undefined
 
-  this.node = null;
-  this.focusTarget = null;
+  this.node = null
+  this.focusTarget = null
 
-  this._setOptions(options);
+  this._setOptions(options)
 
-  if (options.autocomplete)
-      this.autocomplete = new autocomplete(options.autocomplete);
+  if (options.autocomplete) { this.autocomplete = autocomplete(options.autocomplete) }
 
   if (this.options.history && this.options.mode !== 'view') {
-    this.history = new History(this);
+    this.history = new NodeHistory(this)
   }
 
-  this._createFrame();
-  this._createTable();
-};
+  this._createFrame()
+  this._createTable()
+}
 
 /**
  * Destroy the editor. Clean up DOM, event listeners, and web workers.
  */
 treemode.destroy = function () {
-  if (this.frame && this.container && this.frame.parentNode == this.container) {
-    this.container.removeChild(this.frame);
-    this.frame = null;
+  if (this.frame && this.container && this.frame.parentNode === this.container) {
+    this.container.removeChild(this.frame)
+    this.frame = null
   }
-  this.container = null;
+  this.container = null
 
-  this.dom = null;
+  this.dom = null
 
-  this.clear();
-  this.node = null;
-  this.focusTarget = null;
-  this.selection = null;
-  this.multiselection = null;
-  this.errorNodes = null;
-  this.validateSchema = null;
-  this._debouncedValidate = null;
+  this.clear()
+  this.node = null
+  this.focusTarget = null
+  this.selection = null
+  this.multiselection = null
+  this.errorNodes = null
+  this.validateSchema = null
+  this._debouncedValidate = null
 
   if (this.history) {
-    this.history.destroy();
-    this.history = null;
+    this.history.destroy()
+    this.history = null
   }
 
   if (this.searchBox) {
-    this.searchBox.destroy();
-    this.searchBox = null;
+    this.searchBox.destroy()
+    this.searchBox = null
   }
 
   if (this.modeSwitcher) {
-    this.modeSwitcher.destroy();
-    this.modeSwitcher = null;
+    this.modeSwitcher.destroy()
+    this.modeSwitcher = null
   }
-};
+
+  // Removing the FocusTracker set to track the editor's focus event
+  this.frameFocusTracker.destroy()
+}
 
 /**
  * Initialize and set default options
@@ -114,151 +122,235 @@ treemode._setOptions = function (options) {
     search: true,
     history: true,
     mode: 'tree',
-    name: undefined,   // field name of root node
+    name: undefined, // field name of root node
     schema: null,
     schemaRefs: null,
     autocomplete: null,
-    navigationBar : true,
-    onSelectionChange: null
-  };
+    navigationBar: true,
+    mainMenuBar: true,
+    limitDragging: false,
+    onSelectionChange: null,
+    colorPicker: true,
+    onColorPicker: function (parent, color, onChange) {
+      if (VanillaPicker) {
+        // we'll render the color picker on top
+        // when there is not enough space below, and there is enough space above
+        const pickerHeight = 300 // estimated height of the color picker
+        const top = parent.getBoundingClientRect().top
+        const windowHeight = getWindow(parent).innerHeight
+        const showOnTop = ((windowHeight - top) < pickerHeight && top > pickerHeight)
+
+        new VanillaPicker({
+          parent: parent,
+          color: color,
+          popup: showOnTop ? 'top' : 'bottom',
+          onDone: function (color) {
+            const alpha = color.rgba[3]
+            const hex = (alpha === 1)
+              ? color.hex.substr(0, 7) // return #RRGGBB
+              : color.hex // return #RRGGBBAA
+            onChange(hex)
+          }
+        }).show()
+      } else {
+        console.warn('Cannot open color picker: the `vanilla-picker` library is not included in the bundle. ' +
+            'Either use the full bundle or implement your own color picker using `onColorPicker`.')
+      }
+    },
+    timestampTag: true,
+    timestampFormat: null,
+    createQuery,
+    executeQuery,
+    onEvent: null,
+    enableSort: true,
+    enableTransform: true
+  }
 
   // copy all options
   if (options) {
-    for (var prop in options) {
-      if (options.hasOwnProperty(prop)) {
-        this.options[prop] = options[prop];
-      }
+    Object.keys(options).forEach(prop => {
+      this.options[prop] = options[prop]
+    })
+
+    // default limitDragging to true when a JSON schema is defined
+    if (options.limitDragging == null && options.schema != null) {
+      this.options.limitDragging = true
     }
   }
 
   // compile a JSON schema validator if a JSON schema is provided
-  this.setSchema(this.options.schema, this.options.schemaRefs);
+  this.setSchema(this.options.schema, this.options.schemaRefs)
 
   // create a debounced validate function
-  this._debouncedValidate = util.debounce(this.validate.bind(this), this.DEBOUNCE_INTERVAL);
+  this._debouncedValidate = debounce(this._validateAndCatch.bind(this), this.DEBOUNCE_INTERVAL)
 
   if (options.onSelectionChange) {
-    this.onSelectionChange(options.onSelectionChange);
+    this.onSelectionChange(options.onSelectionChange)
   }
 
-  setLanguages(this.options.languages);
+  setLanguages(this.options.languages)
   setLanguage(this.options.language)
-};
+}
 
 /**
- * Set JSON object in editor
- * @param {Object | undefined} json      JSON data
- * @param {String}             [name]    Optional field name for the root node.
- *                                       Can also be set using setName(name).
+ * Set new JSON object in editor.
+ * Resets the state of the editor (expanded nodes, search, selection).
+ *
+ * @param {*} json
  */
-treemode.set = function (json, name) {
-  // adjust field name for root node
-  if (name) {
-    // TODO: deprecated since version 2.2.0. Cleanup some day.
-    console.warn('Second parameter "name" is deprecated. Use setName(name) instead.');
-    this.options.name = name;
-  }
-
+treemode.set = function (json) {
   // verify if json is valid JSON, ignore when a function
   if (json instanceof Function || (json === undefined)) {
-    this.clear();
-  }
-  else {
-    this.content.removeChild(this.table);  // Take the table offline
+    this.clear()
+  } else {
+    this.content.removeChild(this.table) // Take the table offline
 
     // replace the root node
-    var params = {
+    const params = {
       field: this.options.name,
       value: json
-    };
-    var node = new Node(this, params);
-    this._setRoot(node);
+    }
+    const node = new Node(this, params)
+    this._setRoot(node)
 
     // validate JSON schema (if configured)
-    this.validate();
+    this._validateAndCatch()
 
     // expand
-    var recurse = false;
-    this.node.expand(recurse);
+    const recurse = false
+    this.node.expand(recurse)
 
-    this.content.appendChild(this.table);  // Put the table online again
+    this.content.appendChild(this.table) // Put the table online again
   }
 
   // TODO: maintain history, store last state and previous document
   if (this.history) {
-    this.history.clear();
+    this.history.clear()
   }
 
   // clear search
   if (this.searchBox) {
-    this.searchBox.clear();
+    this.searchBox.clear()
   }
-};
+}
+
+/**
+ * Update JSON object in editor.
+ * Maintains the state of the editor (expanded nodes, search, selection).
+ *
+ * @param {*} json
+ */
+treemode.update = function (json) {
+  // don't update if there are no changes
+  if (this.node.deepEqual(json)) {
+    return
+  }
+
+  const selection = this.getSelection()
+
+  // apply the changed json
+  this.onChangeDisabled = true // don't fire an onChange event
+  this.node.update(json)
+  this.onChangeDisabled = false
+
+  // validate JSON schema
+  this._validateAndCatch()
+
+  // update search result if any
+  if (this.searchBox && !this.searchBox.isEmpty()) {
+    this.searchBox.forceSearch()
+  }
+
+  // update selection if any
+  if (selection && selection.start && selection.end) {
+    // only keep/update the selection if both start and end node still exists,
+    // else we clear the selection
+    const startNode = this.node.findNodeByPath(selection.start.path)
+    const endNode = this.node.findNodeByPath(selection.end.path)
+    if (startNode && endNode) {
+      this.setSelection(selection.start, selection.end)
+    } else {
+      this.setSelection({}, {}) // clear selection
+    }
+  } else {
+    this.setSelection({}, {}) // clear selection
+  }
+}
 
 /**
  * Get JSON object from editor
  * @return {Object | undefined} json
  */
 treemode.get = function () {
-  // remove focus from currently edited node
-  if (this.focusTarget) {
-    var node = Node.getNodeFromTarget(this.focusTarget);
-    if (node) {
-      node.blur();
-    }
-  }
+  // TODO: resolve pending debounced input changes if any, but do not resolve invalid inputs
 
   if (this.node) {
-    return this.node.getValue();
+    return this.node.getValue()
+  } else {
+    return undefined
   }
-  else {
-    return undefined;
-  }
-};
+}
 
 /**
  * Get the text contents of the editor
  * @return {String} jsonText
  */
-treemode.getText = function() {
-  return JSON.stringify(this.get());
-};
+treemode.getText = function () {
+  return JSON.stringify(this.get())
+}
 
 /**
- * Set the text contents of the editor
+ * Set the text contents of the editor.
+ * Resets the state of the editor (expanded nodes, search, selection).
  * @param {String} jsonText
  */
-treemode.setText = function(jsonText) {
+treemode.setText = function (jsonText) {
   try {
-    this.set(util.parse(jsonText)); // this can throw an error
-  }
-  catch (err) {
-    // try to sanitize json, replace JavaScript notation with JSON notation
-    var sanitizedJsonText = util.sanitize(jsonText);
+    this.set(parse(jsonText)) // this can throw an error
+  } catch (err) {
+    // try to repair json, replace JavaScript notation with JSON notation
+    const repairedJsonText = tryJsonRepair(jsonText)
 
     // try to parse again
-    this.set(util.parse(sanitizedJsonText)); // this can throw an error
+    this.set(parse(repairedJsonText)) // this can throw an error
   }
-};
+}
+
+/**
+ * Update the text contents of the editor.
+ * Maintains the state of the editor (expanded nodes, search, selection).
+ * @param {String} jsonText
+ */
+treemode.updateText = function (jsonText) {
+  try {
+    this.update(parse(jsonText)) // this can throw an error
+  } catch (err) {
+    // try to repair json, replace JavaScript notation with JSON notation
+    const repairJsonText = tryJsonRepair(jsonText)
+
+    // try to parse again
+    this.update(parse(repairJsonText)) // this can throw an error
+  }
+}
 
 /**
  * Set a field name for the root node.
  * @param {String | undefined} name
  */
 treemode.setName = function (name) {
-  this.options.name = name;
+  this.options.name = name
   if (this.node) {
-    this.node.updateField(this.options.name);
+    this.node.updateField(this.options.name)
   }
-};
+}
 
 /**
  * Get the field name for the root node.
  * @return {String | undefined} name
  */
 treemode.getName = function () {
-  return this.options.name;
-};
+  return this.options.name
+}
 
 /**
  * Set focus to the editor. Focus will be set to:
@@ -268,39 +360,35 @@ treemode.getName = function () {
  * - to the first button in the top menu
  */
 treemode.focus = function () {
-  var input = this.content.querySelector('[contenteditable=true]');
+  let input = this.scrollableContent.querySelector('[contenteditable=true]')
   if (input) {
-    input.focus();
-  }
-  else if (this.node.dom.expand) {
-    this.node.dom.expand.focus();
-  }
-  else if (this.node.dom.menu) {
-    this.node.dom.menu.focus();
-  }
-  else {
+    input.focus()
+  } else if (this.node.dom.expand) {
+    this.node.dom.expand.focus()
+  } else if (this.node.dom.menu) {
+    this.node.dom.menu.focus()
+  } else {
     // focus to the first button in the menu
-    input = this.frame.querySelector('button');
+    input = this.frame.querySelector('button')
     if (input) {
-      input.focus();
+      input.focus()
     }
   }
-};
+}
 
 /**
  * Remove the root node from the editor
  */
 treemode.clear = function () {
   if (this.node) {
-    this.node.collapse();
-    this.tbody.removeChild(this.node.getDom());
-    delete this.node;
+    this.node.hide()
+    delete this.node
   }
 
   if (this.treePath) {
-    this.treePath.reset();
+    this.treePath.reset()
   }
-};
+}
 
 /**
  * Set the root node for the json editor
@@ -308,13 +396,16 @@ treemode.clear = function () {
  * @private
  */
 treemode._setRoot = function (node) {
-  this.clear();
+  this.clear()
 
-  this.node = node;
+  this.node = node
+  node.setParent(null)
+  node.setField(this.getName(), false)
+  delete node.index
 
   // append to the dom
-  this.tbody.appendChild(node.getDom());
-};
+  this.tbody.appendChild(node.getDom())
+}
 
 /**
  * Search text in all nodes
@@ -329,40 +420,39 @@ treemode._setRoot = function (node) {
  *                                              'value')
  */
 treemode.search = function (text) {
-  var results;
+  let results
   if (this.node) {
-    this.content.removeChild(this.table);  // Take the table offline
-    results = this.node.search(text);
-    this.content.appendChild(this.table);  // Put the table online again
-  }
-  else {
-    results = [];
+    this.content.removeChild(this.table) // Take the table offline
+    results = this.node.search(text)
+    this.content.appendChild(this.table) // Put the table online again
+  } else {
+    results = []
   }
 
-  return results;
-};
+  return results
+}
 
 /**
  * Expand all nodes
  */
 treemode.expandAll = function () {
   if (this.node) {
-    this.content.removeChild(this.table);  // Take the table offline
-    this.node.expand();
-    this.content.appendChild(this.table);  // Put the table online again
+    this.content.removeChild(this.table) // Take the table offline
+    this.node.expand()
+    this.content.appendChild(this.table) // Put the table online again
   }
-};
+}
 
 /**
  * Collapse all nodes
  */
 treemode.collapseAll = function () {
   if (this.node) {
-    this.content.removeChild(this.table);  // Take the table offline
-    this.node.collapse();
-    this.content.appendChild(this.table);  // Put the table online again
+    this.content.removeChild(this.table) // Take the table offline
+    this.node.collapse()
+    this.content.appendChild(this.table) // Put the table online again
   }
-};
+}
 
 /**
  * The method onChange is called whenever a field or value is changed, created,
@@ -381,11 +471,11 @@ treemode.collapseAll = function () {
 treemode._onAction = function (action, params) {
   // add an action to the history
   if (this.history) {
-    this.history.add(action, params);
+    this.history.add(action, params)
   }
 
-  this._onChange();
-};
+  this._onChange()
+}
 
 /**
  * Handle a change:
@@ -394,105 +484,240 @@ treemode._onAction = function (action, params) {
  * @private
  */
 treemode._onChange = function () {
+  if (this.onChangeDisabled) {
+    return
+  }
+
+  // selection can be changed after undo/redo
+  this.selection = this.getDomSelection()
+
   // validate JSON schema (if configured)
-  this._debouncedValidate();
+  this._debouncedValidate()
+
+  if (this.treePath) {
+    const selectedNode = (this.node && this.selection)
+      ? this.node.findNodeByInternalPath(this.selection.path)
+      : this.multiselection
+        ? this.multiselection.nodes[0]
+        : undefined
+
+    if (selectedNode) {
+      this._updateTreePath(selectedNode.getNodePath())
+    } else {
+      this.treePath.reset()
+    }
+  }
 
   // trigger the onChange callback
   if (this.options.onChange) {
     try {
-      this.options.onChange();
-    }
-    catch (err) {
-      console.error('Error in onChange callback: ', err);
+      this.options.onChange()
+    } catch (err) {
+      console.error('Error in onChange callback: ', err)
     }
   }
-};
+
+  // trigger the onChangeJSON callback
+  if (this.options.onChangeJSON) {
+    try {
+      this.options.onChangeJSON(this.get())
+    } catch (err) {
+      console.error('Error in onChangeJSON callback: ', err)
+    }
+  }
+
+  // trigger the onChangeText callback
+  if (this.options.onChangeText) {
+    try {
+      this.options.onChangeText(this.getText())
+    } catch (err) {
+      console.error('Error in onChangeText callback: ', err)
+    }
+  }
+
+  // trigger the onClassName callback
+  if (this.options.onClassName) {
+    this.node.recursivelyUpdateCssClassesOnNodes()
+  }
+
+  // trigger the onNodeName callback
+  if (this.options.onNodeName && this.node.childs) {
+    try {
+      this.node.recursivelyUpdateNodeName()
+    } catch (err) {
+      console.error('Error in onNodeName callback: ', err)
+    }
+  }
+}
 
 /**
  * Validate current JSON object against the configured JSON schema
  * Throws an exception when no JSON schema is configured
  */
 treemode.validate = function () {
-  // clear all current errors
-  if (this.errorNodes) {
-    this.errorNodes.forEach(function (node) {
-      node.setError(null);
-    });
-  }
-
-  var root = this.node;
+  const root = this.node
   if (!root) { // TODO: this should be redundant but is needed on mode switch
-    return;
+    return
   }
 
-  // check for duplicate keys
-  var duplicateErrors = root.validate();
+  const json = root.getValue()
 
-  // validate the JSON
-  var schemaErrors = [];
+  // execute JSON schema validation
+  let schemaErrors = []
   if (this.validateSchema) {
-    var valid = this.validateSchema(root.getValue());
+    const valid = this.validateSchema(json)
     if (!valid) {
       // apply all new errors
       schemaErrors = this.validateSchema.errors
-          .map(function (error) {
-            return util.improveSchemaError(error);
-          })
-          .map(function findNode (error) {
-            return {
-              node: root.findNode(error.dataPath),
-              error: error
-            }
-          })
-          .filter(function hasNode (entry) {
-            return entry.node != null
-          });
+        .map(error => improveSchemaError(error))
+        .map(function findNode (error) {
+          return {
+            node: root.findNode(error.dataPath),
+            error: error,
+            type: 'validation'
+          }
+        })
+        .filter(function hasNode (entry) {
+          return entry.node != null
+        })
     }
   }
 
-  var errorNodes = duplicateErrors.concat(schemaErrors);
-  var parentPairs = errorNodes
-      .reduce(function (all, entry) {
-          return entry.node
-              .findParents()
-              .filter(function (parent) {
-                  return !all.some(function (pair) {
-                    return pair[0] === parent;
-                  });
-              })
-              .map(function (parent) {
-                  return [parent, entry.node];
-              })
-              .concat(all);
-      }, []);
+  // execute custom validation and after than merge and render all errors
+  try {
+    this.validationSequence++
+    const me = this
+    const seq = this.validationSequence
+    return this._validateCustom(json)
+      .then(customValidationErrors => {
+        // only apply when there was no other validation started whilst resolving async results
+        if (seq === me.validationSequence) {
+          const errorNodes = [].concat(schemaErrors, customValidationErrors || [])
+          me._renderValidationErrors(errorNodes)
+          if (
+            typeof this.options.onValidationError === 'function' &&
+            isValidationErrorChanged(errorNodes, this.lastSchemaErrors)
+          ) {
+            this.options.onValidationError.call(this, errorNodes)
+          }
+
+          this.lastSchemaErrors = errorNodes
+        }
+
+        return this.lastSchemaErrors
+      })
+  } catch (err) {
+    return Promise.reject(err)
+  }
+}
+
+treemode._validateAndCatch = function () {
+  this.validate().catch(err => {
+    console.error('Error running validation:', err)
+  })
+}
+
+treemode._renderValidationErrors = function (errorNodes) {
+  // clear all current errors
+  if (this.errorNodes) {
+    this.errorNodes.forEach(node => {
+      node.setError(null)
+    })
+  }
+
+  // render the new errors
+  const parentPairs = errorNodes
+    .reduce((all, entry) => entry.node
+      .findParents()
+      .filter(parent => !all.some(pair => pair[0] === parent))
+      .map(parent => [parent, entry.node])
+      .concat(all), [])
 
   this.errorNodes = parentPairs
-      .map(function (pair) {
-          return {
-            node: pair[0],
-            child: pair[1],
-            error: {
-              message: pair[0].type === 'object'
-                  ? 'Contains invalid properties' // object
-                  : 'Contains invalid items'      // array
-            }
-          };
+    .map(pair => ({
+      node: pair[0],
+      child: pair[1],
+
+      error: {
+        message: pair[0].type === 'object'
+          ? translate('containsInvalidProperties') // object
+          : translate('containsInvalidItems') // array
+      }
+    }))
+    .concat(errorNodes)
+    .map(function setError (entry) {
+      entry.node.setError(entry.error, entry.child)
+      return entry.node
+    })
+}
+
+/**
+ * Execute custom validation if configured.
+ *
+ * Returns a promise resolving with the custom errors (or nothing).
+ */
+treemode._validateCustom = function (json) {
+  try {
+    if (this.options.onValidate) {
+      const root = this.node
+      const customValidateResults = this.options.onValidate(json)
+
+      const resultPromise = isPromise(customValidateResults)
+        ? customValidateResults
+        : Promise.resolve(customValidateResults)
+
+      return resultPromise.then(customValidationPathErrors => {
+        if (Array.isArray(customValidationPathErrors)) {
+          return customValidationPathErrors
+            .filter(error => {
+              const valid = isValidValidationError(error)
+
+              if (!valid) {
+                console.warn('Ignoring a custom validation error with invalid structure. ' +
+                      'Expected structure: {path: [...], message: "..."}. ' +
+                      'Actual error:', error)
+              }
+
+              return valid
+            })
+            .map(error => {
+              let node
+              try {
+                node = (error && error.path) ? root.findNodeByPath(error.path) : null
+              } catch (err) {
+                // stay silent here, we throw a generic warning if no node is found
+              }
+              if (!node) {
+                console.warn('Ignoring validation error: node not found. Path:', error.path, 'Error:', error)
+              }
+
+              return {
+                node: node,
+                error: error,
+                type: 'customValidation'
+              }
+            })
+            .filter(entry => entry && entry.node && entry.error && entry.error.message)
+        } else {
+          return null
+        }
       })
-      .concat(errorNodes)
-      .map(function setError (entry) {
-        entry.node.setError(entry.error, entry.child);
-        return entry.node;
-      });
-};
+    }
+  } catch (err) {
+    return Promise.reject(err)
+  }
+
+  return Promise.resolve(null)
+}
 
 /**
  * Refresh the rendered contents
  */
 treemode.refresh = function () {
   if (this.node) {
-    this.node.updateDom({recurse: true});
+    this.node.updateDom({ recurse: true })
   }
-};
+}
 
 /**
  * Start autoscrolling when given mouse position is above the top of the
@@ -500,55 +725,50 @@ treemode.refresh = function () {
  * @param {Number} mouseY  Absolute mouse position in pixels
  */
 treemode.startAutoScroll = function (mouseY) {
-  var me = this;
-  var content = this.content;
-  var top = util.getAbsoluteTop(content);
-  var height = content.clientHeight;
-  var bottom = top + height;
-  var margin = 24;
-  var interval = 50; // ms
+  const me = this
+  const content = this.scrollableContent
+  const top = getAbsoluteTop(content)
+  const height = content.clientHeight
+  const bottom = top + height
+  const margin = 24
+  const interval = 50 // ms
 
   if ((mouseY < top + margin) && content.scrollTop > 0) {
-    this.autoScrollStep = ((top + margin) - mouseY) / 3;
-  }
-  else if (mouseY > bottom - margin &&
+    this.autoScrollStep = ((top + margin) - mouseY) / 3
+  } else if (mouseY > bottom - margin &&
       height + content.scrollTop < content.scrollHeight) {
-    this.autoScrollStep = ((bottom - margin) - mouseY) / 3;
-  }
-  else {
-    this.autoScrollStep = undefined;
+    this.autoScrollStep = ((bottom - margin) - mouseY) / 3
+  } else {
+    this.autoScrollStep = undefined
   }
 
   if (this.autoScrollStep) {
     if (!this.autoScrollTimer) {
-      this.autoScrollTimer = setInterval(function () {
+      this.autoScrollTimer = setInterval(() => {
         if (me.autoScrollStep) {
-          content.scrollTop -= me.autoScrollStep;
+          content.scrollTop -= me.autoScrollStep
+        } else {
+          me.stopAutoScroll()
         }
-        else {
-          me.stopAutoScroll();
-        }
-      }, interval);
+      }, interval)
     }
+  } else {
+    this.stopAutoScroll()
   }
-  else {
-    this.stopAutoScroll();
-  }
-};
+}
 
 /**
  * Stop auto scrolling. Only applicable when scrolling
  */
 treemode.stopAutoScroll = function () {
   if (this.autoScrollTimer) {
-    clearTimeout(this.autoScrollTimer);
-    delete this.autoScrollTimer;
+    clearTimeout(this.autoScrollTimer)
+    delete this.autoScrollTimer
   }
   if (this.autoScrollStep) {
-    delete this.autoScrollStep;
+    delete this.autoScrollStep
   }
-};
-
+}
 
 /**
  * Set the focus to an element in the editor, set text selection, and
@@ -562,24 +782,35 @@ treemode.stopAutoScroll = function () {
  */
 treemode.setDomSelection = function (selection) {
   if (!selection) {
-    return;
+    return
   }
 
-  if ('scrollTop' in selection && this.content) {
+  if ('scrollTop' in selection && this.scrollableContent) {
     // TODO: animated scroll
-    this.content.scrollTop = selection.scrollTop;
+    this.scrollableContent.scrollTop = selection.scrollTop
   }
-  if (selection.nodes) {
+  if (selection.paths) {
     // multi-select
-    this.select(selection.nodes);
+    const me = this
+    const nodes = selection.paths.map(path => me.node.findNodeByInternalPath(path))
+
+    this.select(nodes)
+  } else {
+    // find the actual DOM element where to apply the focus
+    const node = selection.path
+      ? this.node.findNodeByInternalPath(selection.path)
+      : null
+    const container = (node && selection.domName)
+      ? node.dom[selection.domName]
+      : null
+    if (selection.range && container) {
+      const range = Object.assign({}, selection.range, { container: container })
+      setSelectionOffset(range)
+    } else if (node) { // just a fallback
+      node.focus()
+    }
   }
-  if (selection.range) {
-    util.setSelectionOffset(selection.range);
-  }
-  if (selection.dom) {
-    selection.dom.focus();
-  }
-};
+}
 
 /**
  * Get the current focus
@@ -591,74 +822,93 @@ treemode.setDomSelection = function (selection) {
  *                            {Number} scrollTop            Scroll position
  */
 treemode.getDomSelection = function () {
-  var range = util.getSelectionOffset();
+  // find the node and field name of the current target,
+  // so we can store the current selection in a serializable
+  // way (internal node path and domName)
+  const node = Node.getNodeFromTarget(this.focusTarget)
+  const focusTarget = this.focusTarget
+  const domName = node
+    ? Object.keys(node.dom).find(domName => node.dom[domName] === focusTarget)
+    : null
+
+  let range = getSelectionOffset()
   if (range && range.container.nodeName !== 'DIV') { // filter on (editable) divs)
-    range = null;
+    range = null
+  }
+  if (range && range.container !== focusTarget) {
+    range = null
+  }
+  if (range) {
+    // we cannot rely on the current instance of the container,
+    // we need to store the internal node path and field and
+    // find the actual DOM field when applying the selection
+    delete range.container
   }
 
   return {
-    dom: this.focusTarget,
+    path: node ? node.getInternalPath() : null,
+    domName: domName,
     range: range,
-    nodes: this.multiselection.nodes.slice(0),
-    scrollTop: this.content ? this.content.scrollTop : 0
-  };
-};
+    paths: this.multiselection.length > 0
+      ? this.multiselection.nodes.map(node => node.getInternalPath())
+      : null,
+    scrollTop: this.scrollableContent ? this.scrollableContent.scrollTop : 0
+  }
+}
 
 /**
  * Adjust the scroll position such that given top position is shown at 1/4
  * of the window height.
  * @param {Number} top
- * @param {function(boolean)} [callback]   Callback, executed when animation is
- *                                         finished. The callback returns true
- *                                         when animation is finished, or false
- *                                         when not.
+ * @param {function(boolean)} [animateCallback] Callback, executed when animation is
+ *                                              finished. The callback returns true
+ *                                              when animation is finished, or false
+ *                                              when not.
  */
-treemode.scrollTo = function (top, callback) {
-  var content = this.content;
+treemode.scrollTo = function (top, animateCallback) {
+  const content = this.scrollableContent
   if (content) {
-    var editor = this;
+    const editor = this
     // cancel any running animation
     if (editor.animateTimeout) {
-      clearTimeout(editor.animateTimeout);
-      delete editor.animateTimeout;
+      clearTimeout(editor.animateTimeout)
+      delete editor.animateTimeout
     }
     if (editor.animateCallback) {
-      editor.animateCallback(false);
-      delete editor.animateCallback;
+      editor.animateCallback(false)
+      delete editor.animateCallback
     }
 
     // calculate final scroll position
-    var height = content.clientHeight;
-    var bottom = content.scrollHeight - height;
-    var finalScrollTop = Math.min(Math.max(top - height / 4, 0), bottom);
+    const height = content.clientHeight
+    const bottom = content.scrollHeight - height
+    const finalScrollTop = Math.min(Math.max(top - height / 4, 0), bottom)
 
     // animate towards the new scroll position
-    var animate = function () {
-      var scrollTop = content.scrollTop;
-      var diff = (finalScrollTop - scrollTop);
+    const animate = () => {
+      const scrollTop = content.scrollTop
+      const diff = (finalScrollTop - scrollTop)
       if (Math.abs(diff) > 3) {
-        content.scrollTop += diff / 3;
-        editor.animateCallback = callback;
-        editor.animateTimeout = setTimeout(animate, 50);
-      }
-      else {
+        content.scrollTop += diff / 3
+        editor.animateCallback = animateCallback
+        editor.animateTimeout = setTimeout(animate, 50)
+      } else {
         // finished
-        if (callback) {
-          callback(true);
+        if (animateCallback) {
+          animateCallback(true)
         }
-        content.scrollTop = finalScrollTop;
-        delete editor.animateTimeout;
-        delete editor.animateCallback;
+        content.scrollTop = finalScrollTop
+        delete editor.animateTimeout
+        delete editor.animateCallback
       }
-    };
-    animate();
-  }
-  else {
-    if (callback) {
-      callback(false);
+    }
+    animate()
+  } else {
+    if (animateCallback) {
+      animateCallback(false)
     }
   }
-};
+}
 
 /**
  * Create main frame
@@ -666,133 +916,174 @@ treemode.scrollTo = function (top, callback) {
  */
 treemode._createFrame = function () {
   // create the frame
-  this.frame = document.createElement('div');
-  this.frame.className = 'jsoneditor jsoneditor-mode-' + this.options.mode;
-  this.container.appendChild(this.frame);
+  this.frame = document.createElement('div')
+  this.frame.className = 'jsoneditor jsoneditor-mode-' + this.options.mode
+  // this.frame.setAttribute("tabindex","0");
+
+  this.container.appendChild(this.frame)
+
+  this.contentOuter = document.createElement('div')
+  this.contentOuter.className = 'jsoneditor-outer'
 
   // create one global event listener to handle all events from all nodes
-  var editor = this;
-  function onEvent(event) {
+  const editor = this
+  function onEvent (event) {
     // when switching to mode "code" or "text" via the menu, some events
     // are still fired whilst the _onEvent methods is already removed.
     if (editor._onEvent) {
-      editor._onEvent(event);
+      editor._onEvent(event)
     }
   }
-  this.frame.onclick = function (event) {
-    var target = event.target;// || event.srcElement;
 
-    onEvent(event);
+  // setting the FocusTracker on 'this.frame' to track the editor's focus event
+  const focusTrackerConfig = {
+    target: this.frame,
+    onFocus: this.options.onFocus || null,
+    onBlur: this.options.onBlur || null
+  }
+
+  this.frameFocusTracker = new FocusTracker(focusTrackerConfig)
+
+  this.frame.onclick = event => {
+    const target = event.target// || event.srcElement;
+
+    onEvent(event)
 
     // prevent default submit action of buttons when editor is located
     // inside a form
-    if (target.nodeName == 'BUTTON') {
-      event.preventDefault();
+    if (target.nodeName === 'BUTTON') {
+      event.preventDefault()
     }
-  };
-  this.frame.oninput = onEvent;
-  this.frame.onchange = onEvent;
-  this.frame.onkeydown = onEvent;
-  this.frame.onkeyup = onEvent;
-  this.frame.oncut = onEvent;
-  this.frame.onpaste = onEvent;
-  this.frame.onmousedown = onEvent;
-  this.frame.onmouseup = onEvent;
-  this.frame.onmouseover = onEvent;
-  this.frame.onmouseout = onEvent;
+  }
+  this.frame.oninput = onEvent
+  this.frame.onchange = onEvent
+  this.frame.onkeydown = onEvent
+  this.frame.onkeyup = onEvent
+  this.frame.oncut = onEvent
+  this.frame.onpaste = onEvent
+  this.frame.onmousedown = onEvent
+  this.frame.onmouseup = onEvent
+  this.frame.onmouseover = onEvent
+  this.frame.onmouseout = onEvent
   // Note: focus and blur events do not propagate, therefore they defined
   // using an eventListener with useCapture=true
   // see http://www.quirksmode.org/blog/archives/2008/04/delegating_the.html
-  util.addEventListener(this.frame, 'focus', onEvent, true);
-  util.addEventListener(this.frame, 'blur', onEvent, true);
-  this.frame.onfocusin = onEvent;  // for IE
-  this.frame.onfocusout = onEvent; // for IE
+  addEventListener(this.frame, 'focus', onEvent, true)
+  addEventListener(this.frame, 'blur', onEvent, true)
+  this.frame.onfocusin = onEvent // for IE
+  this.frame.onfocusout = onEvent // for IE
 
-  // create menu
-  this.menu = document.createElement('div');
-  this.menu.className = 'jsoneditor-menu';
-  this.frame.appendChild(this.menu);
+  if (this.options.mainMenuBar) {
+    addClassName(this.contentOuter, 'has-main-menu-bar')
 
-  // create expand all button
-  var expandAll = document.createElement('button');
-  expandAll.type = 'button';
-  expandAll.className = 'jsoneditor-expand-all';
-  expandAll.title = translate('expandAll');
-  expandAll.onclick = function () {
-    editor.expandAll();
-  };
-  this.menu.appendChild(expandAll);
+    // create menu
+    this.menu = document.createElement('div')
+    this.menu.className = 'jsoneditor-menu'
+    this.frame.appendChild(this.menu)
 
-  // create collapse all button
-  var collapseAll = document.createElement('button');
-  collapseAll.type = 'button';
-  collapseAll.title = translate('collapseAll');
-  collapseAll.className = 'jsoneditor-collapse-all';
-  collapseAll.onclick = function () {
-    editor.collapseAll();
-  };
-  this.menu.appendChild(collapseAll);
+    // create expand all button
+    const expandAll = document.createElement('button')
+    expandAll.type = 'button'
+    expandAll.className = 'jsoneditor-expand-all'
+    expandAll.title = translate('expandAll')
+    expandAll.onclick = () => {
+      editor.expandAll()
+    }
+    this.menu.appendChild(expandAll)
 
-  // create undo/redo buttons
-  if (this.history) {
-    // create undo button
-    var undo = document.createElement('button');
-    undo.type = 'button';
-    undo.className = 'jsoneditor-undo jsoneditor-separator';
-    undo.title = translate('undo');
-    undo.onclick = function () {
-      editor._onUndo();
-    };
-    this.menu.appendChild(undo);
-    this.dom.undo = undo;
+    // create collapse all button
+    const collapseAll = document.createElement('button')
+    collapseAll.type = 'button'
+    collapseAll.title = translate('collapseAll')
+    collapseAll.className = 'jsoneditor-collapse-all'
+    collapseAll.onclick = () => {
+      editor.collapseAll()
+    }
+    this.menu.appendChild(collapseAll)
 
-    // create redo button
-    var redo = document.createElement('button');
-    redo.type = 'button';
-    redo.className = 'jsoneditor-redo';
-    redo.title = translate('redo');
-    redo.onclick = function () {
-      editor._onRedo();
-    };
-    this.menu.appendChild(redo);
-    this.dom.redo = redo;
+    // create sort button
+    if (this.options.enableSort) {
+      const sort = document.createElement('button')
+      sort.type = 'button'
+      sort.className = 'jsoneditor-sort'
+      sort.title = translate('sortTitleShort')
+      sort.onclick = () => {
+        editor.node.showSortModal()
+      }
+      this.menu.appendChild(sort)
+    }
 
-    // register handler for onchange of history
-    this.history.onChange = function () {
-      undo.disabled = !editor.history.canUndo();
-      redo.disabled = !editor.history.canRedo();
-    };
-    this.history.onChange();
+    // create transform button
+    if (this.options.enableTransform) {
+      const transform = document.createElement('button')
+      transform.type = 'button'
+      transform.title = translate('transformTitleShort')
+      transform.className = 'jsoneditor-transform'
+      transform.onclick = () => {
+        editor.node.showTransformModal()
+      }
+      this.menu.appendChild(transform)
+    }
+
+    // create undo/redo buttons
+    if (this.history) {
+      // create undo button
+      const undo = document.createElement('button')
+      undo.type = 'button'
+      undo.className = 'jsoneditor-undo jsoneditor-separator'
+      undo.title = translate('undo')
+      undo.onclick = () => {
+        editor._onUndo()
+      }
+      this.menu.appendChild(undo)
+      this.dom.undo = undo
+
+      // create redo button
+      const redo = document.createElement('button')
+      redo.type = 'button'
+      redo.className = 'jsoneditor-redo'
+      redo.title = translate('redo')
+      redo.onclick = () => {
+        editor._onRedo()
+      }
+      this.menu.appendChild(redo)
+      this.dom.redo = redo
+
+      // register handler for onchange of history
+      this.history.onChange = () => {
+        undo.disabled = !editor.history.canUndo()
+        redo.disabled = !editor.history.canRedo()
+      }
+      this.history.onChange()
+    }
+
+    // create mode box
+    if (this.options && this.options.modes && this.options.modes.length) {
+      const me = this
+      this.modeSwitcher = new ModeSwitcher(this.menu, this.options.modes, this.options.mode, function onSwitch (mode) {
+        // switch mode and restore focus
+        me.setMode(mode)
+        me.modeSwitcher.focus()
+      })
+    }
+
+    // create search box
+    if (this.options.search) {
+      this.searchBox = new SearchBox(this, this.menu)
+    }
   }
 
-  // create mode box
-  if (this.options && this.options.modes && this.options.modes.length) {
-    var me = this;
-    this.modeSwitcher = new ModeSwitcher(this.menu, this.options.modes, this.options.mode, function onSwitch(mode) {
-      me.modeSwitcher.destroy();
-
-      // switch mode and restore focus
-      me.setMode(mode);
-      me.modeSwitcher.focus();
-    });
-  }
-
-  // create search box
-  if (this.options.search) {
-    this.searchBox = new SearchBox(this, this.menu);
-  }
-
-  if(this.options.navigationBar) {
+  if (this.options.navigationBar) {
     // create second menu row for treepath
-    this.navBar = document.createElement('div');
-    this.navBar.className = 'jsoneditor-navigation-bar nav-bar-empty';
-    this.frame.appendChild(this.navBar);
+    this.navBar = document.createElement('div')
+    this.navBar.className = 'jsoneditor-navigation-bar nav-bar-empty'
+    this.frame.appendChild(this.navBar)
 
-    this.treePath = new TreePath(this.navBar);
-    this.treePath.onSectionSelected(this._onTreePathSectionSelected.bind(this));
-    this.treePath.onContextMenuItemSelected(this._onTreePathMenuItemSelected.bind(this));
+    this.treePath = new TreePath(this.navBar, this.getPopupAnchor())
+    this.treePath.onSectionSelected(this._onTreePathSectionSelected.bind(this))
+    this.treePath.onContextMenuItemSelected(this._onTreePathMenuItemSelected.bind(this))
   }
-};
+}
 
 /**
  * Perform an undo action
@@ -801,12 +1092,12 @@ treemode._createFrame = function () {
 treemode._onUndo = function () {
   if (this.history) {
     // undo last action
-    this.history.undo();
+    this.history.undo()
 
     // fire change event
-    this._onChange();
+    this._onChange()
   }
-};
+}
 
 /**
  * Perform a redo action
@@ -815,12 +1106,12 @@ treemode._onUndo = function () {
 treemode._onRedo = function () {
   if (this.history) {
     // redo last action
-    this.history.redo();
+    this.history.redo()
 
     // fire change event
-    this._onChange();
+    this._onChange()
   }
-};
+}
 
 /**
  * Event handler
@@ -828,120 +1119,127 @@ treemode._onRedo = function () {
  * @private
  */
 treemode._onEvent = function (event) {
-  if (event.type === 'keydown') {
-    this._onKeyDown(event);
+  // don't process events when coming from the color picker
+  if (Node.targetIsColorPicker(event.target)) {
+    return
   }
 
-  if (event.type === 'focus') {
-    this.focusTarget = event.target;
+  const node = Node.getNodeFromTarget(event.target)
+
+  if (event.type === 'keydown') {
+    this._onKeyDown(event)
+  }
+
+  if (node && event.type === 'focus') {
+    this.focusTarget = event.target
+    if (this.options.autocomplete && this.options.autocomplete.trigger === 'focus') {
+      this._showAutoComplete(event.target)
+    }
   }
 
   if (event.type === 'mousedown') {
-    this._startDragDistance(event);
+    this._startDragDistance(event)
   }
   if (event.type === 'mousemove' || event.type === 'mouseup' || event.type === 'click') {
-    this._updateDragDistance(event);
+    this._updateDragDistance(event)
   }
-
-  var node = Node.getNodeFromTarget(event.target);
 
   if (node && this.options && this.options.navigationBar && node && (event.type === 'keydown' || event.type === 'mousedown')) {
     // apply on next tick, right after the new key press is applied
-    var me = this;
-    setTimeout(function () {
-      me._updateTreePath(node.getNodePath());
+    const me = this
+    setTimeout(() => {
+      me._updateTreePath(node.getNodePath())
     })
   }
 
   if (node && node.selected) {
     if (event.type === 'click') {
       if (event.target === node.dom.menu) {
-        this.showContextMenu(event.target);
+        this.showContextMenu(event.target)
 
         // stop propagation (else we will open the context menu of a single node)
-        return;
+        return
       }
 
       // deselect a multi selection
       if (!event.hasMoved) {
-        this.deselect();
+        this.deselect()
       }
     }
 
     if (event.type === 'mousedown') {
       // drag multiple nodes
-      Node.onDragStart(this.multiselection.nodes, event);
+      Node.onDragStart(this.multiselection.nodes, event)
     }
-  }
-  else {
-    if (event.type === 'mousedown') {
-      this.deselect();
+  } else {
+    // filter mouse events in the contents part of the editor (not the main menu)
+    if (event.type === 'mousedown' && hasParentNode(event.target, this.content)) {
+      this.deselect()
 
       if (node && event.target === node.dom.drag) {
         // drag a singe node
-        Node.onDragStart(node, event);
-      }
-      else if (!node || (event.target !== node.dom.field && event.target !== node.dom.value && event.target !== node.dom.select)) {
+        Node.onDragStart(node, event)
+      } else if (!node || (event.target !== node.dom.field && event.target !== node.dom.value && event.target !== node.dom.select)) {
         // select multiple nodes
-        this._onMultiSelectStart(event);
+        this._onMultiSelectStart(event)
       }
     }
   }
 
   if (node) {
-    node.onEvent(event);
+    node.onEvent(event)
   }
-};
+}
 
 /**
  * Update TreePath components
- * @param {Array<Node>} pathNodes list of nodes in path from root to selection 
+ * @param {Array<Node>} pathNodes list of nodes in path from root to selection
  * @private
  */
 treemode._updateTreePath = function (pathNodes) {
   if (pathNodes && pathNodes.length) {
-    util.removeClassName(this.navBar, 'nav-bar-empty');
-    
-    var pathObjs = [];
-    pathNodes.forEach(function (node) {
-      var pathObj = {
+    removeClassName(this.navBar, 'nav-bar-empty')
+
+    const pathObjs = []
+    pathNodes.forEach(node => {
+      const pathObj = {
         name: getName(node),
         node: node,
         children: []
       }
       if (node.childs && node.childs.length) {
-        node.childs.forEach(function (childNode) {
+        node.childs.forEach(childNode => {
           pathObj.children.push({
             name: getName(childNode),
             node: childNode
-          });
-        });
+          })
+        })
       }
-      pathObjs.push(pathObj);
-    });
-    this.treePath.setPath(pathObjs);
+      pathObjs.push(pathObj)
+    })
+    this.treePath.setPath(pathObjs)
   } else {
-    util.addClassName(this.navBar, 'nav-bar-empty');
+    addClassName(this.navBar, 'nav-bar-empty')
   }
 
-  function getName(node) {
-    return node.field !== undefined
-        ? node._escapeHTML(node.field)
-        : (isNaN(node.index) ? node.type : node.index);
+  function getName (node) {
+    return node.parent
+      ? ((node.parent.type === 'array') ? node.index : node.field)
+      : (node.field || node.type)
   }
-};
+}
 
 /**
  * Callback for tree path section selection - focus the selected node in the tree
  * @param {Object} pathObj path object that was represents the selected section node
  * @private
  */
-treemode._onTreePathSectionSelected = function (pathObj) {
-  if(pathObj && pathObj.node) {
-    pathObj.node.expandTo();
-    pathObj.node.focus();
+treemode._onTreePathSectionSelected = pathObj => {
+  if (pathObj && pathObj.node) {
+    pathObj.node.expandTo()
+    pathObj.node.focus()
   }
-};
+}
 
 /**
  * Callback for tree path menu item selection - rebuild the path accrding to the new selection and focus the selected node in the tree
@@ -950,17 +1248,15 @@ treemode._onTreePathSectionSelected = function (pathObj) {
  * @private
  */
 treemode._onTreePathMenuItemSelected = function (pathObj, selection) {
-  if(pathObj && pathObj.children.length) {
-    var selectionObj = pathObj.children.find(function (obj) {
-      return obj.name === selection;
-    });
-    if(selectionObj && selectionObj.node) {
-      this._updateTreePath(selectionObj.node.getNodePath());
-      selectionObj.node.expandTo();
-      selectionObj.node.focus();
+  if (pathObj && pathObj.children.length) {
+    const selectionObj = pathObj.children.find(obj => obj.name === selection)
+    if (selectionObj && selectionObj.node) {
+      this._updateTreePath(selectionObj.node.getNodePath())
+      selectionObj.node.expandTo()
+      selectionObj.node.focus()
     }
   }
-};
+}
 
 treemode._startDragDistance = function (event) {
   this.dragDistanceEvent = {
@@ -969,154 +1265,156 @@ treemode._startDragDistance = function (event) {
     initialPageY: event.pageY,
     dragDistance: 0,
     hasMoved: false
-  };
-};
+  }
+}
 
 treemode._updateDragDistance = function (event) {
   if (!this.dragDistanceEvent) {
-    this._startDragDistance(event);
+    this._startDragDistance(event)
   }
 
-  var diffX = event.pageX - this.dragDistanceEvent.initialPageX;
-  var diffY = event.pageY - this.dragDistanceEvent.initialPageY;
+  const diffX = event.pageX - this.dragDistanceEvent.initialPageX
+  const diffY = event.pageY - this.dragDistanceEvent.initialPageY
 
-  this.dragDistanceEvent.dragDistance = Math.sqrt(diffX * diffX + diffY * diffY);
+  this.dragDistanceEvent.dragDistance = Math.sqrt(diffX * diffX + diffY * diffY)
   this.dragDistanceEvent.hasMoved =
-      this.dragDistanceEvent.hasMoved || this.dragDistanceEvent.dragDistance > 10;
+      this.dragDistanceEvent.hasMoved || this.dragDistanceEvent.dragDistance > 10
 
-  event.dragDistance = this.dragDistanceEvent.dragDistance;
-  event.hasMoved = this.dragDistanceEvent.hasMoved;
+  event.dragDistance = this.dragDistanceEvent.dragDistance
+  event.hasMoved = this.dragDistanceEvent.hasMoved
 
-  return event.dragDistance;
-};
+  return event.dragDistance
+}
 
 /**
  * Start multi selection of nodes by dragging the mouse
- * @param event
+ * @param {MouseEvent} event
  * @private
  */
 treemode._onMultiSelectStart = function (event) {
-  var node = Node.getNodeFromTarget(event.target);
+  const node = Node.getNodeFromTarget(event.target)
 
   if (this.options.mode !== 'tree' || this.options.onEditable !== undefined) {
     // dragging not allowed in modes 'view' and 'form'
     // TODO: allow multiselection of items when option onEditable is specified
-    return;
+    return
   }
 
   this.multiselection = {
     start: node || null,
     end: null,
     nodes: []
-  };
+  }
 
-  this._startDragDistance(event);
+  this._startDragDistance(event)
 
-  var editor = this;
+  const editor = this
   if (!this.mousemove) {
-    this.mousemove = util.addEventListener(window, 'mousemove', function (event) {
-      editor._onMultiSelect(event);
-    });
+    this.mousemove = addEventListener(event.view, 'mousemove', event => {
+      editor._onMultiSelect(event)
+    })
   }
   if (!this.mouseup) {
-    this.mouseup = util.addEventListener(window, 'mouseup', function (event ) {
-      editor._onMultiSelectEnd(event);
-    });
+    this.mouseup = addEventListener(event.view, 'mouseup', event => {
+      editor._onMultiSelectEnd(event)
+    })
   }
 
-};
+  event.preventDefault()
+}
 
 /**
  * Multiselect nodes by dragging
- * @param event
+ * @param {MouseEvent} event
  * @private
  */
 treemode._onMultiSelect = function (event) {
-  event.preventDefault();
+  event.preventDefault()
 
-  this._updateDragDistance(event);
+  this._updateDragDistance(event)
   if (!event.hasMoved) {
-    return;
+    return
   }
 
-  var node = Node.getNodeFromTarget(event.target);
+  const node = Node.getNodeFromTarget(event.target)
 
   if (node) {
     if (this.multiselection.start == null) {
-      this.multiselection.start = node;
+      this.multiselection.start = node
     }
-    this.multiselection.end = node;
+    this.multiselection.end = node
   }
 
   // deselect previous selection
-  this.deselect();
+  this.deselect()
 
   // find the selected nodes in the range from first to last
-  var start = this.multiselection.start;
-  var end = this.multiselection.end || this.multiselection.start;
+  const start = this.multiselection.start
+  const end = this.multiselection.end || this.multiselection.start
   if (start && end) {
     // find the top level childs, all having the same parent
-    this.multiselection.nodes = this._findTopLevelNodes(start, end);
+    this.multiselection.nodes = this._findTopLevelNodes(start, end)
     if (this.multiselection.nodes && this.multiselection.nodes.length) {
-      var firstNode = this.multiselection.nodes[0];
+      const firstNode = this.multiselection.nodes[0]
       if (this.multiselection.start === firstNode || this.multiselection.start.isDescendantOf(firstNode)) {
-        this.multiselection.direction = 'down';
+        this.multiselection.direction = 'down'
       } else {
-        this.multiselection.direction = 'up';
+        this.multiselection.direction = 'up'
       }
     }
-    this.select(this.multiselection.nodes);
+    this.select(this.multiselection.nodes)
   }
-};
+}
 
 /**
  * End of multiselect nodes by dragging
- * @param event
+ * @param {MouseEvent} event
  * @private
  */
 treemode._onMultiSelectEnd = function (event) {
   // set focus to the context menu button of the first node
-  if (this.multiselection.nodes[0]) {
-    this.multiselection.nodes[0].dom.menu.focus();
+  const firstNode = this.multiselection.nodes[0]
+  if (firstNode && firstNode.dom.menu) {
+    firstNode.dom.menu.focus()
   }
 
-  this.multiselection.start = null;
-  this.multiselection.end = null;
+  this.multiselection.start = null
+  this.multiselection.end = null
 
   // cleanup global event listeners
   if (this.mousemove) {
-    util.removeEventListener(window, 'mousemove', this.mousemove);
-    delete this.mousemove;
+    removeEventListener(event.view, 'mousemove', this.mousemove)
+    delete this.mousemove
   }
   if (this.mouseup) {
-    util.removeEventListener(window, 'mouseup', this.mouseup);
-    delete this.mouseup;
+    removeEventListener(event.view, 'mouseup', this.mouseup)
+    delete this.mouseup
   }
-};
+}
 
 /**
  * deselect currently selected nodes
  * @param {boolean} [clearStartAndEnd=false]  If true, the `start` and `end`
- *                                            state is cleared too. 
+ *                                            state is cleared too.
  */
 treemode.deselect = function (clearStartAndEnd) {
-  var selectionChanged = !!this.multiselection.nodes.length;
-  this.multiselection.nodes.forEach(function (node) {
-    node.setSelected(false);
-  });
-  this.multiselection.nodes = [];
+  const selectionChanged = !!this.multiselection.nodes.length
+  this.multiselection.nodes.forEach(node => {
+    node.setSelected(false)
+  })
+  this.multiselection.nodes = []
 
   if (clearStartAndEnd) {
-    this.multiselection.start = null;
-    this.multiselection.end = null;
+    this.multiselection.start = null
+    this.multiselection.end = null
   }
 
   if (selectionChanged) {
     if (this._selectionChangedHandler) {
-      this._selectionChangedHandler();
+      this._selectionChangedHandler()
     }
   }
-};
+}
 
 /**
  * select nodes
@@ -1124,26 +1422,26 @@ treemode.deselect = function (clearStartAndEnd) {
  */
 treemode.select = function (nodes) {
   if (!Array.isArray(nodes)) {
-    return this.select([nodes]);
+    return this.select([nodes])
   }
 
   if (nodes) {
-    this.deselect();
+    this.deselect()
 
-    this.multiselection.nodes = nodes.slice(0);
+    this.multiselection.nodes = nodes.slice(0)
 
-    var first = nodes[0];
-    nodes.forEach(function (node) {
-      node.expandPathToNode();
-      node.setSelected(true, node === first);
-    });
+    const first = nodes[0]
+    nodes.forEach(node => {
+      node.expandPathToNode()
+      node.setSelected(true, node === first)
+    })
 
     if (this._selectionChangedHandler) {
-      var selection = this.getSelection();
-      this._selectionChangedHandler(selection.start, selection.end);
+      const selection = this.getSelection()
+      this._selectionChangedHandler(selection.start, selection.end)
     }
   }
-};
+}
 
 /**
  * From two arbitrary selected nodes, find their shared parent node.
@@ -1154,43 +1452,92 @@ treemode.select = function (nodes) {
  * @return {Array.<Node>} Returns an ordered list with child nodes
  * @private
  */
-treemode._findTopLevelNodes = function (start, end) {
-  var startPath = start.getNodePath();
-  var endPath = end.getNodePath();
-  var i = 0;
+treemode._findTopLevelNodes = (start, end) => {
+  const startPath = start.getNodePath()
+  const endPath = end.getNodePath()
+  let i = 0
   while (i < startPath.length && startPath[i] === endPath[i]) {
-    i++;
+    i++
   }
-  var root = startPath[i - 1];
-  var startChild = startPath[i];
-  var endChild = endPath[i];
+  let root = startPath[i - 1]
+  let startChild = startPath[i]
+  let endChild = endPath[i]
 
   if (!startChild || !endChild) {
     if (root.parent) {
       // startChild is a parent of endChild or vice versa
-      startChild = root;
-      endChild = root;
+      startChild = root
+      endChild = root
       root = root.parent
-    }
-    else {
+    } else {
       // we have selected the root node (which doesn't have a parent)
-      startChild = root.childs[0];
-      endChild = root.childs[root.childs.length - 1];
+      startChild = root.childs[0]
+      endChild = root.childs[root.childs.length - 1]
     }
   }
 
   if (root && startChild && endChild) {
-    var startIndex = root.childs.indexOf(startChild);
-    var endIndex = root.childs.indexOf(endChild);
-    var firstIndex = Math.min(startIndex, endIndex);
-    var lastIndex = Math.max(startIndex, endIndex);
+    const startIndex = root.childs.indexOf(startChild)
+    const endIndex = root.childs.indexOf(endChild)
+    const firstIndex = Math.min(startIndex, endIndex)
+    const lastIndex = Math.max(startIndex, endIndex)
 
-    return root.childs.slice(firstIndex, lastIndex + 1);
+    return root.childs.slice(firstIndex, lastIndex + 1)
+  } else {
+    return []
   }
-  else {
-    return [];
+}
+
+/**
+ * Show autocomplete menu
+ * @param {HTMLElement} element
+ * @private
+ */
+treemode._showAutoComplete = function (element) {
+  const node = Node.getNodeFromTarget(element)
+
+  let jsonElementType = ''
+  if (element.className.indexOf('jsoneditor-value') >= 0) jsonElementType = 'value'
+  if (element.className.indexOf('jsoneditor-field') >= 0) jsonElementType = 'field'
+
+  if (jsonElementType === '') {
+    // Unknown element field. Could be a button or something else
+    return
   }
-};
+
+  const self = this
+
+  setTimeout(() => {
+    if (node && (self.options.autocomplete.trigger === 'focus' || element.innerText.length > 0)) {
+      const result = self.options.autocomplete.getOptions(element.innerText, node.getPath(), jsonElementType, node.editor)
+      if (result === null) {
+        self.autocomplete.hideDropDown()
+      } else if (typeof result.then === 'function') {
+        // probably a promise
+        result
+          .then(obj => {
+            if (obj === null) {
+              self.autocomplete.hideDropDown()
+            } else if (obj.options) {
+              self.autocomplete.show(element, obj.startFrom, obj.options)
+            } else {
+              self.autocomplete.show(element, 0, obj)
+            }
+          })
+          .catch(err => {
+            console.error(err)
+          })
+      } else {
+        // definitely not a promise
+        if (result.options) {
+          self.autocomplete.show(element, result.startFrom, result.options)
+        } else {
+          self.autocomplete.show(element, 0, result)
+        }
+      }
+    } else { self.autocomplete.hideDropDown() }
+  }, 50)
+}
 
 /**
  * Event handler for keydown. Handles shortcut keys
@@ -1198,142 +1545,122 @@ treemode._findTopLevelNodes = function (start, end) {
  * @private
  */
 treemode._onKeyDown = function (event) {
-  var keynum = event.which || event.keyCode;
-  var altKey = event.altKey;
-  var ctrlKey = event.ctrlKey;
-  var metaKey = event.metaKey;
-  var shiftKey = event.shiftKey;
-  var handled = false;
+  const keynum = event.which || event.keyCode
+  const altKey = event.altKey
+  const ctrlKey = event.ctrlKey
+  const metaKey = event.metaKey
+  const shiftKey = event.shiftKey
+  let handled = false
+  const currentTarget = this.focusTarget
 
-  if (keynum == 9) { // Tab or Shift+Tab
-    var me = this;
-    setTimeout(function () {
-      // select all text when moving focus to an editable div
-      util.selectContentEditable(me.focusTarget);
-    }, 0);
+  if (keynum === 9) { // Tab or Shift+Tab
+    const me = this
+    setTimeout(() => {
+      /*
+          - Checking for change in focusTarget
+          - Without the check,
+            pressing tab after reaching the final DOM element in the editor will
+            set the focus back to it than passing focus outside the editor
+      */
+      if (me.focusTarget !== currentTarget) {
+        // select all text when moving focus to an editable div
+        selectContentEditable(me.focusTarget)
+      }
+    }, 0)
   }
 
   if (this.searchBox) {
-    if (ctrlKey && keynum == 70) { // Ctrl+F
-      this.searchBox.dom.search.focus();
-      this.searchBox.dom.search.select();
-      handled = true;
-    }
-    else if (keynum == 114 || (ctrlKey && keynum == 71)) { // F3 or Ctrl+G
-      var focus = true;
+    if (ctrlKey && keynum === 70) { // Ctrl+F
+      this.searchBox.dom.search.focus()
+      this.searchBox.dom.search.select()
+      handled = true
+    } else if (keynum === 114 || (ctrlKey && keynum === 71)) { // F3 or Ctrl+G
+      const focus = true
       if (!shiftKey) {
         // select next search result (F3 or Ctrl+G)
-        this.searchBox.next(focus);
-      }
-      else {
+        this.searchBox.next(focus)
+      } else {
         // select previous search result (Shift+F3 or Ctrl+Shift+G)
-        this.searchBox.previous(focus);
+        this.searchBox.previous(focus)
       }
 
-      handled = true;
+      handled = true
     }
   }
 
   if (this.history) {
-    if (ctrlKey && !shiftKey && keynum == 90) { // Ctrl+Z
+    if (ctrlKey && !shiftKey && keynum === 90) { // Ctrl+Z
       // undo
-      this._onUndo();
-      handled = true;
-    }
-    else if (ctrlKey && shiftKey && keynum == 90) { // Ctrl+Shift+Z
+      this._onUndo()
+      handled = true
+    } else if (ctrlKey && shiftKey && keynum === 90) { // Ctrl+Shift+Z
       // redo
-      this._onRedo();
-      handled = true;
+      this._onRedo()
+      handled = true
     }
   }
 
   if ((this.options.autocomplete) && (!handled)) {
-      if (!ctrlKey && !altKey && !metaKey && (event.key.length == 1 || keynum == 8 || keynum == 46)) {
-          handled = false;
-          var jsonElementType = "";
-          if (event.target.className.indexOf("jsoneditor-value") >= 0) jsonElementType = "value";
-          if (event.target.className.indexOf("jsoneditor-field") >= 0) jsonElementType = "field";
-
-          var node = Node.getNodeFromTarget(event.target);
-          // Activate autocomplete
-          setTimeout(function (hnode, element) {
-              if (element.innerText.length > 0) {
-                  var result = this.options.autocomplete.getOptions(element.innerText, hnode.getPath(), jsonElementType, hnode.editor);
-                  if (result === null) {
-                      this.autocomplete.hideDropDown();
-                  } else if (typeof result.then === 'function') {
-                      // probably a promise
-                      if (result.then(function (obj) {
-                          if (obj === null) {
-                              this.autocomplete.hideDropDown();
-                          } else if (obj.options) {
-                              this.autocomplete.show(element, obj.startFrom, obj.options);
-                          } else {
-                              this.autocomplete.show(element, 0, obj);
-                          }
-                      }.bind(this)));
-                  } else {
-                      // definitely not a promise
-                      if (result.options)
-                          this.autocomplete.show(element, result.startFrom, result.options);
-                      else
-                          this.autocomplete.show(element, 0, result);
-                  }
-              }
-              else
-                  this.autocomplete.hideDropDown();
-
-          }.bind(this, node, event.target), 50);
-      } 
+    if (!ctrlKey && !altKey && !metaKey && (event.key.length === 1 || keynum === 8 || keynum === 46)) {
+      handled = false
+      // Activate autocomplete
+      this._showAutoComplete(event.target)
+    }
   }
 
   if (handled) {
-    event.preventDefault();
-    event.stopPropagation();
+    event.preventDefault()
+    event.stopPropagation()
   }
-};
+}
 
 /**
  * Create main table
  * @private
  */
 treemode._createTable = function () {
-  var contentOuter = document.createElement('div');
-  contentOuter.className = 'jsoneditor-outer';
-  if(this.options.navigationBar) {
-    util.addClassName(contentOuter, 'has-nav-bar');
+  if (this.options.navigationBar) {
+    addClassName(this.contentOuter, 'has-nav-bar')
   }
-  this.contentOuter = contentOuter;
 
-  this.content = document.createElement('div');
-  this.content.className = 'jsoneditor-tree';
-  contentOuter.appendChild(this.content);
+  this.scrollableContent = document.createElement('div')
+  this.scrollableContent.className = 'jsoneditor-tree'
+  this.contentOuter.appendChild(this.scrollableContent)
 
-  this.table = document.createElement('table');
-  this.table.className = 'jsoneditor-tree';
-  this.content.appendChild(this.table);
+  // the jsoneditor-tree-inner div with bottom padding is here to
+  // keep space for the action menu dropdown. It's created as a
+  // separate div instead of using scrollableContent to work around
+  // and issue in the Chrome browser showing scrollable contents outside of the div
+  // see https://github.com/josdejong/jsoneditor/issues/557
+  this.content = document.createElement('div')
+  this.content.className = 'jsoneditor-tree-inner'
+  this.scrollableContent.appendChild(this.content)
+
+  this.table = document.createElement('table')
+  this.table.className = 'jsoneditor-tree'
+  this.content.appendChild(this.table)
 
   // create colgroup where the first two columns don't have a fixed
   // width, and the edit columns do have a fixed width
-  var col;
-  this.colgroupContent = document.createElement('colgroup');
+  let col
+  this.colgroupContent = document.createElement('colgroup')
   if (this.options.mode === 'tree') {
-    col = document.createElement('col');
-    col.width = "24px";
-    this.colgroupContent.appendChild(col);
+    col = document.createElement('col')
+    col.width = '24px'
+    this.colgroupContent.appendChild(col)
   }
-  col = document.createElement('col');
-  col.width = "24px";
-  this.colgroupContent.appendChild(col);
-  col = document.createElement('col');
-  this.colgroupContent.appendChild(col);
-  this.table.appendChild(this.colgroupContent);
+  col = document.createElement('col')
+  col.width = '24px'
+  this.colgroupContent.appendChild(col)
+  col = document.createElement('col')
+  this.colgroupContent.appendChild(col)
+  this.table.appendChild(this.colgroupContent)
 
-  this.tbody = document.createElement('tbody');
-  this.table.appendChild(this.tbody);
+  this.tbody = document.createElement('tbody')
+  this.table.appendChild(this.tbody)
 
-  this.frame.appendChild(contentOuter);
-};
+  this.frame.appendChild(this.contentOuter)
+}
 
 /**
  * Show a contextmenu for this node.
@@ -1343,8 +1670,8 @@ treemode._createTable = function () {
  *                               is being closed.
  */
 treemode.showContextMenu = function (anchor, onClose) {
-  var items = [];
-  var editor = this;
+  let items = []
+  const selectedNodes = this.multiselection.nodes.slice()
 
   // create duplicate button
   items.push({
@@ -1352,9 +1679,9 @@ treemode.showContextMenu = function (anchor, onClose) {
     title: translate('duplicateTitle'),
     className: 'jsoneditor-duplicate',
     click: function () {
-      Node.onDuplicate(editor.multiselection.nodes);
+      Node.onDuplicate(selectedNodes)
     }
-  });
+  })
 
   // create remove button
   items.push({
@@ -1362,136 +1689,146 @@ treemode.showContextMenu = function (anchor, onClose) {
     title: translate('removeTitle'),
     className: 'jsoneditor-remove',
     click: function () {
-      Node.onRemove(editor.multiselection.nodes);
+      Node.onRemove(selectedNodes)
     }
-  });
+  })
 
-  var menu = new ContextMenu(items, {close: onClose});
-  menu.show(anchor, this.content);
-};
+  if (this.options.onCreateMenu) {
+    const paths = selectedNodes.map(node => node.getPath())
+
+    items = this.options.onCreateMenu(items, {
+      type: 'multiple',
+      path: paths[0],
+      paths: paths
+    })
+  }
+
+  const menu = new ContextMenu(items, { close: onClose })
+  menu.show(anchor, this.getPopupAnchor())
+}
+
+treemode.getPopupAnchor = function () {
+  return this.options.popupAnchor || this.frame
+}
 
 /**
  * Get current selected nodes
  * @return {{start:SerializableNode, end: SerializableNode}}
  */
 treemode.getSelection = function () {
-  var selection = {
+  const selection = {
     start: null,
     end: null
-  };
+  }
   if (this.multiselection.nodes && this.multiselection.nodes.length) {
     if (this.multiselection.nodes.length) {
-      var selection1 = this.multiselection.nodes[0];
-      var selection2 = this.multiselection.nodes[this.multiselection.nodes.length - 1];
+      const selection1 = this.multiselection.nodes[0]
+      const selection2 = this.multiselection.nodes[this.multiselection.nodes.length - 1]
       if (this.multiselection.direction === 'down') {
-        selection.start = selection1.serialize();
-        selection.end = selection2.serialize();
+        selection.start = selection1.serialize()
+        selection.end = selection2.serialize()
       } else {
-        selection.start = selection2.serialize();
-        selection.end = selection1.serialize();
+        selection.start = selection2.serialize()
+        selection.end = selection1.serialize()
       }
     }
   }
-  return selection;
-};
+  return selection
+}
 
 /**
- * Callback registraion for selection change
- * @param {selectionCallback} callback 
- * 
+ * Callback registration for selection change
+ * @param {selectionCallback} callback
+ *
  * @callback selectionCallback
- * @param {SerializableNode=} start
- * @param {SerializableNode=} end
  */
 treemode.onSelectionChange = function (callback) {
   if (typeof callback === 'function') {
-    this._selectionChangedHandler = util.debounce(callback, this.DEBOUNCE_INTERVAL);
+    this._selectionChangedHandler = debounce(callback, this.DEBOUNCE_INTERVAL)
   }
-};
+}
 
 /**
  * Select range of nodes.
  * For selecting single node send only the start parameter
  * For clear the selection do not send any parameter
  * If the nodes are not from the same level the first common parent will be selected
- * @param {{path: Array.<String>}} start object contains the path for selection start 
- * @param {{path: Array.<String>}=} end object contains the path for selection end
+ * @param {{path: Array.<String>}} start object contains the path for selection start
+ * @param {{path: Array.<String>}} end object contains the path for selection end
  */
 treemode.setSelection = function (start, end) {
   // check for old usage
   if (start && start.dom && start.range) {
-    console.warn('setSelection/getSelection usage for text selection is depracated and should not be used, see documantaion for supported selection options');
-    this.setDomSelection(start);
+    console.warn('setSelection/getSelection usage for text selection is deprecated and should not be used, see documentation for supported selection options')
+    this.setDomSelection(start)
   }
 
-  var nodes = this._getNodeIntsncesByRange(start, end);
-  
-  nodes.forEach(function(node) {
-    node.expandTo();
-  });
-  this.select(nodes);
-};
+  const nodes = this._getNodeInstancesByRange(start, end)
+
+  nodes.forEach(node => {
+    node.expandTo()
+  })
+  this.select(nodes)
+}
 
 /**
  * Returns a set of Nodes according to a range of selection
- * @param {{path: Array.<String>}} start object contains the path for range start 
+ * @param {{path: Array.<String>}} start object contains the path for range start
  * @param {{path: Array.<String>}=} end object contains the path for range end
- * @return {Array.<Node>} Node intances on the given range
+ * @return {Array.<Node>} Node instances on the given range
  * @private
  */
-treemode._getNodeIntsncesByRange = function (start, end) {
-  var startNode, endNode;
+treemode._getNodeInstancesByRange = function (start, end) {
+  let startNode, endNode
 
   if (start && start.path) {
-    startNode = this.node.findNodeByPath(start.path);
+    startNode = this.node.findNodeByPath(start.path)
     if (end && end.path) {
-      endNode = this.node.findNodeByPath(end.path);
+      endNode = this.node.findNodeByPath(end.path)
     }
   }
 
-  var nodes = [];
+  let nodes = []
   if (startNode instanceof Node) {
     if (endNode instanceof Node && endNode !== startNode) {
       if (startNode.parent === endNode.parent) {
-        var start, end;
         if (startNode.getIndex() < endNode.getIndex()) {
-          start = startNode;
-          end = endNode;
+          start = startNode
+          end = endNode
         } else {
-          start = endNode;
-          end = startNode;
+          start = endNode
+          end = startNode
         }
-        var current = start;
-        nodes.push(current);
+        let current = start
+        nodes.push(current)
         do {
-          current = current.nextSibling();
-          nodes.push(current);
-        } while (current && current !== end);
+          current = current.nextSibling()
+          nodes.push(current)
+        } while (current && current !== end)
       } else {
-        nodes = this._findTopLevelNodes(startNode, endNode);
+        nodes = this._findTopLevelNodes(startNode, endNode)
       }
     } else {
-      nodes.push(startNode);
+      nodes.push(startNode)
     }
   }
 
-  return nodes;
-
-};
+  return nodes
+}
 
 treemode.getNodesByRange = function (start, end) {
-  var nodes = this._getNodeIntsncesByRange(start, end);
-  var serializableNodes = [];
+  const nodes = this._getNodeInstancesByRange(start, end)
+  const serializableNodes = []
 
-  nodes.forEach(function (node){
-    serializableNodes.push(node.serialize());
-  });
+  nodes.forEach(node => {
+    serializableNodes.push(node.serialize())
+  })
 
-  return serializableNodes;
+  return serializableNodes
 }
 
 // define modes
-module.exports = [
+export const treeModeMixins = [
   {
     mode: 'tree',
     mixin: treemode,
@@ -1507,4 +1844,4 @@ module.exports = [
     mixin: treemode,
     data: 'json'
   }
-];
+]

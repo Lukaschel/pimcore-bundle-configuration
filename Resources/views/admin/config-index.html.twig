@@ -1,8 +1,8 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="{{ app.request.locale|default('en') }}">
 <head>
     <!-- when using the mode "code", it's important to specify charset utf-8 -->
-    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+    <meta charset="utf-8">
 
     <link href="/bundles/pimcoreconfiguration/js/jsoneditor/dist/jsoneditor.min.css" rel="stylesheet" type="text/css">
     <script src="/bundles/pimcoreconfiguration/js/jsoneditor/dist/jsoneditor.min.js"></script>
@@ -13,25 +13,26 @@
         position: absolute;
         width: 100%;
         height: calc(100% - 50px);
-        /*background-color: green;*/
     }
 
     .menu {
         height: 50px;
-        /*background: yellow;*/
+        background: #EEE;
         display: flex;
         align-items: center;
+        font-family: Verdana, Arial, Helvetica, sans-serif;
+        font-size: 1em;
     }
 
     .menu-item {
         margin-right: 15px;
     }
 </style>
-<body style="margin: 0;">
+<body style="margin:0">
 <div class="menu">
     <div class="menu-item">
         <label for="site">
-            {{ "lukaschel.pimcoreconfigurationbundle.site"|trans }}:
+            {{ "lukaschel_pimcoreconfigurationbundle_site"|trans }}:
         </label>
         <select id="site" onchange="onChange()">
             {% for site in sites %}
@@ -41,7 +42,7 @@
     </div>
     <div class="menu-item" id="language-item" style="display: none">
         <label for="language">
-            {{ "lukaschel.pimcoreconfigurationbundle.language"|trans }}:
+            {{ "lukaschel_pimcoreconfigurationbundle_language"|trans }}:
         </label>
         <select id="language" onchange="onChange()">
             {% for id, language in languages %}
@@ -58,7 +59,6 @@
 </div>
 <div id="jsoneditor"></div>
 <script>
-
     window.addEventListener("load", function () {
         initEditor('default', 0);
     });
@@ -66,14 +66,13 @@
     function onChange() {
         var site = document.getElementById("site").value;
 
-        if(site != 'default') {
+        if (site !== 'default') {
             document.getElementById('language-item').style.display = 'block';
-        }
-        else {
+        } else {
             document.getElementById('language-item').style.display = 'none';
         }
 
-        var language = document.getElementById("language").value;
+        var language = document.getElementById('language').value;
         initEditor(site, language);
     }
 
@@ -95,7 +94,7 @@
             },
             success: function (response, opts) {
                 var data = JSON.parse(response.responseText);
-                if (window.editor != undefined) {
+                if (window.editor !== undefined) {
                     window.editor.destroy();
                 }
                 window.editor = new JSONEditor(container, options, data.config);
@@ -109,8 +108,8 @@
     }
 
     function onSave() {
-        var site = document.getElementById("site").value;
-        var language = document.getElementById("language").value;
+        var site = document.getElementById('site').value;
+        var language = document.getElementById('language').value;
         saveConfig(site, language);
     }
 
@@ -130,11 +129,11 @@
                 var output = document.getElementById('save-output');
 
                 if (jsonObj.success) {
-                    output.innerHTML = '<span style="color:green">{{ "lukaschel.pimcoreconfigurationbundle.message.saved"|trans }}</span>';
+                    output.innerHTML = '<span style="color:green">{{ "lukaschel_pimcoreconfigurationbundle_message_saved"|trans }}</span>';
                     setTimeout(function(){ output.innerHTML = '' }, 1000);
                 }
                 else {
-                    output.innerHTML = '<span style="color:red">{{ "lukaschel.pimcoreconfigurationbundle.message.save.error"|trans }}!</span>';
+                    output.innerHTML = '<span style="color:red">{{ "lukaschel_pimcoreconfigurationbundle_message_save_error"|trans }}!</span>';
                     setTimeout(function(){ output.innerHTML = '' }, 1000);
                 }
             },
