@@ -4,18 +4,18 @@
  * Copyright (c) Lukaschel
  */
 
+declare(strict_types=1);
+
 namespace Lukaschel\PimcoreConfigurationBundle\Traits;
 
+use Pimcore\Kernel;
 use Pimcore\Model\Document\Page;
 use Pimcore\Model\Site;
-use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpKernel\Bundle\BundleInterface;
 
 trait ConfigurationTrait
 {
-    /**
-     * @return array
-     */
-    public function getAllAvailableSites()
+    public function getAllAvailableSites(): array
     {
         $sitesList = new Site\Listing();
         $sitesObjects = $sitesList->load();
@@ -34,33 +34,28 @@ trait ConfigurationTrait
         ];
 
         foreach ($sitesObjects as $site) {
-            if ($site->getRootDocument() instanceof Page) {
-                if ($site->getMainDomain()) {
-                    $sites[] = [
-                        'id' => $site->getId(),
-                        'rootId' => $site->getRootId(),
-                        'domains' => implode(',', $site->getDomains()),
-                        'rootPath' => $site->getRootPath(),
-                        'domain' => $site->getMainDomain(),
-                    ];
-                }
+            if (($site->getRootDocument() instanceof Page) && $site->getMainDomain()) {
+                $sites[] = [
+                    'id' => $site->getId(),
+                    'rootId' => $site->getRootId(),
+                    'domains' => implode(',', $site->getDomains()),
+                    'rootPath' => $site->getRootPath(),
+                    'domain' => $site->getMainDomain(),
+                ];
             }
         }
 
         return $sites;
     }
 
-    /**
-     * @param $bundleName
-     *
-     * @return mixed
-     */
-    private function getBundle($bundleName, ContainerInterface $container)
+    private function getBundle(string $bundleName): BundleInterface
     {
         try {
-            $bundle = $container->get('kernel')->getBundle($bundleName);
+            /** @var Kernel $kernel */
+            $kernel = \Pimcore::getKernel();
+            $bundle = $kernel->getBundle($bundleName);
         } catch (\Exception $e) {
-            throw new \RuntimeException('Invalid bundle name');
+            throw new \RuntimeException('Invalid bundle name: ' . $bundleName);
         }
 
         return $bundle;

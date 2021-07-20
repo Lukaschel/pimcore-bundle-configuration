@@ -4,9 +4,12 @@
  * Copyright (c) Lukaschel
  */
 
+declare(strict_types=1);
+
 namespace Lukaschel\PimcoreConfigurationBundle\Components;
 
 use Lukaschel\PimcoreConfigurationBundle\Configuration\Configuration;
+use Lukaschel\PimcoreConfigurationBundle\Controller\AdminBundleConfigController;
 use Lukaschel\PimcoreConfigurationBundle\Traits\ConfigurationTrait;
 use Pimcore\Http\Request\Resolver\DocumentResolver;
 use Pimcore\Model\Site;
@@ -20,56 +23,27 @@ class BundleConfiguration
 {
     use ConfigurationTrait;
 
-    /**
-     * @var ContainerInterface
-     */
-    private $container;
+    private ContainerInterface $container;
+    private RequestStack $request_stack;
+    private DocumentResolver $document_resolver;
+    private array $config = [];
 
-    /**
-     * @var RequestStack
-     */
-    private $request_stack;
-
-    /**
-     * @var DocumentResolver
-     */
-    private $document_resolver;
-
-    /**
-     * @var array
-     */
-    private $config = [];
-
-    /**
-     * BundleConfiguration constructor.
-     *
-     * @param ContainerInterface $container
-     * @param RequestStack       $request_stack
-     * @param DocumentResolver   $document_resolver
-     */
     public function __construct(
-        ContainerInterface $container,
         RequestStack $request_stack,
         DocumentResolver $document_resolver
     ) {
-        $this->container = $container;
         $this->request_stack = $request_stack;
         $this->document_resolver = $document_resolver;
     }
 
     /**
-     * @param $key
-     * @param string $siteRootId
-     * @param string $language
-     * @param string $bundleName
-     *
-     * @return array|void
+     * @return array|false|void
      */
     public function getConfig(
         $key,
-        $siteRootId = '',
-        $language = '',
-        $bundleName = ''
+        string $siteRootId = '',
+        string $language = '',
+        string $bundleName = ''
     ) {
         // get current language
         if (!$language) {
@@ -93,52 +67,54 @@ class BundleConfiguration
         }
 
         if ($site instanceof Site) {
-            $siteRootId = $site->getRootId();
+            $siteRootId = (string) $site->getRootId();
         }
 
         // getting bundle
         if ($bundleName) {
-            $bundle = $this->getBundle($bundleName, $this->container);
+            $bundle = $this->getBundle($bundleName);
         } else {
-            $bundle = $this->getBundle($this->document_resolver->getDocument()->getModule(), $this->container);
+            $bundle = $this->getBundle($this->document_resolver->getDocument()->getModule());
         }
+
+        $configData = null;
 
         // get bundle default config
-        if (file_exists($bundle->getPath() . '/Resources/config/bundle/bundle.yml')) {
-            $this->config = Yaml::parseFile($bundle->getPath() . '/Resources/config/bundle/bundle.yml');
+        [$fileExists, $filePath] = AdminBundleConfigController::checkYamlFileExists($bundle->getPath() . '/Resources/config/bundle/bundle');
+        if ($fileExists === true) {
+            $this->config = Yaml::parseFile($filePath);
         }
 
-        if (file_exists(Configuration::BUNDLES_CONFIG_FILE_PATH . '/' . $bundle->getName() . '/' . $siteRootId . '_' . $language . '.yml')) {
-            $configData = Yaml::parseFile(Configuration::BUNDLES_CONFIG_FILE_PATH . '/' . $bundle->getName() . '/' . $siteRootId . '_' . $language . '.yml');
+        [$fileExists, $filePath] = AdminBundleConfigController::checkYamlFileExists(Configuration::BUNDLES_CONFIG_FILE_PATH . '/' . $bundle->getName() . '/' . $siteRootId . '_' . $language);
+        if ($fileExists === true) {
+            $configData = Yaml::parseFile($filePath);
         }
 
-        if (sizeof($this->config) and is_array($configData)) {
-            $this->config = array_replace_recursive($this->config, $configData);
-        } elseif (is_array($configData)) {
-            $this->config = $configData;
+        if (is_array($configData)) {
+            if (count($this->config)) {
+                $this->config = array_replace_recursive($this->config, $configData);
+            } else {
+                $this->config = $configData;
+            }
         }
 
         return $this->array_search_key($key, $this->config);
     }
 
     /**
-     * @param string $needle
-     * @param array  $array
-     *
-     * @return array|void
+     * @return false|mixed
      */
-    private function array_search_key($needle, $array)
+    private function array_search_key($needle, array $array)
     {
         foreach ($array as $key => $value) {
-            if ($key == $needle) {
+            if ($key === $needle) {
                 return $value;
             }
-            if (is_array($value)) {
-                if (($result = $this->array_search_key($needle, $value)) !== false) {
-                    return $result;
-                }
+            if (is_array($value) && ($result = $this->array_search_key($needle, $value)) !== false) {
+                return $result;
             }
         }
+
         return false;
     }
 }

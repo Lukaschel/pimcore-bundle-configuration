@@ -7,7 +7,7 @@ Individual for each site and language.
 
 ```json
 "require" : {
-    "lukaschel/pimcore-bundle-configuration" : "~1.0.0"
+    "lukaschel/pimcore-bundle-configuration" : "^2.0"
 }
 ```
 Enable and install the bundle over the pimcore extension manager or the cli tool.
@@ -16,18 +16,31 @@ Just put in your bundle main file (for example: TestBundle.php)
 ```php
 public function getAdminIframePath()
 {
-    return '/admin/pimcoreconfiguration/bundle'.str_replace(__NAMESPACE__, '', __CLASS__);
+    return '/admin/pimcoreconfiguration/bundle' . str_replace(__NAMESPACE__, '', __CLASS__);
 }
+```
+
+If you like to ensure that this configuration Bundle is enabled as a dependency to your Bundle, then add this to your bundle Main file 
+```php
+    public static function registerDependentBundles(BundleCollection $collection): void
+    {
+        $collection->addBundle(new \Lukaschel\PimcoreConfigurationBundle\PimcoreConfigurationBundle);
+    }
+```
+
+and add to your class definition
+```php
+implements \Pimcore\HttpKernel\Bundle\DependentBundleInterface
 ```
 
 ## Configuration
 Go to the pimcore extension manager you should now get a "Configure" column.
 
 Here you can config the "default" options for the bundle.
-This config will be located under your bundle resources folder (TestBundle/Resources/config/bundle/bundle.yml)
+This config will be located under your bundle resources folder (TestBundle/Resources/config/bundle/bundle.yaml)
 
 The Yaml files for the root site and the customs sites will be located 
-under "/var/bundles/PimcoreConfigurationBundle/Bundles/TestBundle/name_language.yml".
+under "/var/bundles/PimcoreConfigurationBundle/Bundles/TestBundle/name_language.yaml".
 
 In this files only the values will be stored witch are different to the default configurations.
 
@@ -49,6 +62,9 @@ In your template you can just use the twig extension by calling:
 {{ bundleconfiguration('key') }}
 ```
 
+
+## Changelog
+For Changelog details please visit [CHANGELOG.md](CHANGELOG.md)
 
 ## Copyright and license
 For licensing details please visit [LICENSE.md](LICENSE.md)

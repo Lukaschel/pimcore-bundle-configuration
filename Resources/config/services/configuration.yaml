@@ -1,0 +1,15 @@
+services:
+
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: true
+
+    Lukaschel\PimcoreConfigurationBundle\Configuration\Configuration: ~
+
+    lukaschel.bundleconfiguration:
+        class: Lukaschel\PimcoreConfigurationBundle\Components\BundleConfiguration
+        public: true
+        arguments:
+            - '@request_stack'
+            - '@Pimcore\Http\Request\Resolver\DocumentResolver'

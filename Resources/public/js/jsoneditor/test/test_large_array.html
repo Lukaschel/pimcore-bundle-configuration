@@ -1,7 +1,7 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 <head>
-  <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+  <meta charset="utf-8">
 
   <link href="../dist/jsoneditor.css" rel="stylesheet" type="text/css">
   <script src="../dist/jsoneditor.js"></script>
@@ -40,7 +40,7 @@
 
   var options = {
     mode: 'tree',
-    modes: ['code', 'form', 'text', 'tree', 'view'], // allowed modes
+    modes: ['code', 'form', 'text', 'tree', 'view', 'preview'], // allowed modes
     onError: function (err) {
       console.error(err);
       alert(err.toString());
@@ -60,14 +60,19 @@
     object: { a: 2, b: 3}
   };
   for (var i = 0; i < 10000; i++) {
+    var longitude = 4 + i / 10000;
+    var latitude = 51 + i / 10000;
+
     json.numbers.push(i);
     json.array.push({
       name: 'Item ' + i,
+      id: String(i),
       index: i,
       time: new Date().toISOString(),
       location: {
-        latitude: 51 + i / 10000,
-        longitude: 4 + i / 10000,
+        latitude: longitude,
+        longitude: latitude,
+        coordinates: [longitude, latitude]
       },
       random: Math.random()
     });

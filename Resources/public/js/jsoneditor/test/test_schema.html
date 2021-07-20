@@ -1,7 +1,7 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 <head>
-  <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+  <meta charset="utf-8">
 
   <link href="../dist/jsoneditor.css" rel="stylesheet" type="text/css">
   <script src="../dist/jsoneditor.js"></script>
@@ -11,8 +11,14 @@
       font: 10.5pt arial;
       color: #4d4d4d;
       line-height: 150%;
-      width: 500px;
+      width: 600px;
       padding-left: 40px;
+    }
+
+    html, body {
+      width: 100%;
+      padding: 0;
+      box-sizing: border-box;
     }
 
     code {
@@ -20,7 +26,8 @@
     }
 
     #jsoneditor {
-      width: 500px;
+      max-width: 600px;
+      width: 90%;
       height: 500px;
     }
   </style>
@@ -39,7 +46,7 @@
   var container = document.getElementById('jsoneditor');
 
   var schema = {
-    "title": "Example Schema",
+    "title": "User",
     "type": "object",
     "properties": {
       "firstName": {
@@ -53,6 +60,7 @@
       },
       "age": {
         "description": "Age in years",
+        "examples": [18, 65],
         "type": "integer",
         "minimum": 0
       },
@@ -71,19 +79,29 @@
   };
 
   var options = {
-    mode: 'tree',
-    modes: ['code', 'form', 'text', 'tree', 'view'], // allowed modes
-    onError: function (err) {
-      console.error(err);
-    },
+    mode: 'code',
+    modes: ['code', 'form', 'text', 'tree', 'view', 'preview'], // allowed modes
     schema: schema,
-    schemaRefs: {"hobbies.json": hobbiesSchema}
+    schemaRefs: {"hobbies.json": hobbiesSchema},
+    onError: function (err) {
+      console.error('ERROR', err);
+    },
+    onChange: async () => {
+      const errors = await editor.validate()
+      if (errors.length === 0) {
+        console.log('validation errors: NONE')
+        // do something, like persisting the JSON
+      } else {
+        // show error to the user or something
+        console.log('validation errors', errors)
+      }
+    }
   };
 
   var json = {
     "firstName": "Jos",
     "lastName": "de Jong",
-    gender: null,
+    "gender": null,
     "age": 34.2,
     "hobbies": [
         "programming",

@@ -2,7 +2,7 @@ pimcore.registerNS("pimcore.plugin.PimcoreConfigurationBundle");
 
 pimcore.plugin.PimcoreConfigurationBundle = Class.create(pimcore.plugin.admin, {
     getClassName: function () {
-        return "pimcore.plugin.PimcoreConfigurationBundle";
+        return 'pimcore.plugin.PimcoreConfigurationBundle';
     },
 
     initialize: function () {
@@ -15,4 +15,3 @@ pimcore.plugin.PimcoreConfigurationBundle = Class.create(pimcore.plugin.admin, {
 });
 
 var PimcoreConfigurationBundlePlugin = new pimcore.plugin.PimcoreConfigurationBundle();
-
