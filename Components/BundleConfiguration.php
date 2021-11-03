@@ -46,13 +46,17 @@ class BundleConfiguration
         string $bundleName = ''
     ) {
         // get current language
-        if (!$language) {
-            $language = $this->request_stack->getCurrentRequest()->getLocale();
+        $validLanguages = Tool::getValidLanguages();
+
+        if (empty($language)) {
+            if ($this->request_stack->getCurrentRequest() !== null) {
+                $language = $this->request_stack->getCurrentRequest()->getLocale();
+            } else if (count($validLanguages) > 0) {
+                $language = $validLanguages[0];
+            }
         }
 
-        $languages = Tool::getValidLanguages();
-
-        if (!in_array($language, $languages)) {
+        if (!in_array($language, $validLanguages)) {
             return;
         }
 
