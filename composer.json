@@ -31,7 +31,7 @@
   "require": {
     "php": "^7.4 || ^8.0",
     "ext-json": "*",
-    "composer/installers": "^1.9",
+    "composer/installers": "^1.9 || ^2.0",
     "pimcore/pimcore": "^6.9 || ^10.0"
   },
   "require-dev": {
