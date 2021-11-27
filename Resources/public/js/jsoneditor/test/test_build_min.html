@@ -1,7 +1,7 @@
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 <head>
-  <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+  <meta charset="utf-8">
 
   <link href="../dist/jsoneditor.min.css" rel="stylesheet" type="text/css">
   <script src="../dist/jsoneditor.min.js"></script>
@@ -41,7 +41,7 @@
 
   options = {
     mode: 'tree',
-    modes: ['code', 'form', 'text', 'tree', 'view'], // allowed modes
+    modes: ['code', 'form', 'text', 'tree', 'view', 'preview'], // allowed modes
     onError: function (err) {
       alert(err.toString());
     }
@@ -50,6 +50,7 @@
   json = {
     "array": [1, 2, 3],
     "boolean": true,
+    "color": "#82b92c",
     "null": null,
     "number": 123,
     "object": {"a": "b", "c": "d"},

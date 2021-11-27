@@ -1,0 +1,4 @@
+lukaschel_pimcoreconfigurationbundle_site: "Site"
+lukaschel_pimcoreconfigurationbundle_language: "Language"
+lukaschel_pimcoreconfigurationbundle_message_saved: "Saved"
+lukaschel_pimcoreconfigurationbundle_message_save_error: "Could not be saved"

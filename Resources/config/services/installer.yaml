@@ -1,0 +1,12 @@
+services:
+
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: true
+
+    pimcore.bundle.cmd.installer: '@Lukaschel\PimcoreConfigurationBundle\Tools\Installer'
+    Lukaschel\PimcoreConfigurationBundle\Tools\Installer:
+        arguments:
+            $bundle: "@=service('kernel').getBundle('PimcoreConfigurationBundle')"
+        calls:

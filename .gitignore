@@ -1,0 +1,27 @@
+# Node Modules
+/Resources/public/js/jsoneditor/node_modules
+
+# composer
+composer.lock
+/vendor/
+
+# npm #
+/node_modules/
+
+# PHP-CS-Fixer
+/.php_cs.cache
+
+# PhpStorm / IDEA
+.idea
+.idea_modules
+
+# NetBeans
+nbproject
+
+# symfony default
+/.web-server-pid
+
+# MAC Stuff
+.DS_Store
+Thumbs.db
+*.log

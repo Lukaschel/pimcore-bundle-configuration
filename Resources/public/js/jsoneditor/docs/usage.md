@@ -2,20 +2,11 @@
 
 ### Install
 
-with npm:
+Install via npm:
 
     npm install jsoneditor
 
-with bower:
-
-    bower install jsoneditor
-
-download:
-
-[http://jsoneditoronline.org/downloads/](http://jsoneditoronline.org/downloads/)
-
-The library consists of three files: one javascript file, one css file and an
-image. Both full and minified version are available.
+Alternatively, you can use another JavaScript package manager like https://yarnpkg.com/, or a CDN such as https://cdnjs.com/ or https://www.jsdelivr.com/.
 
 ## Load
 
@@ -27,9 +18,11 @@ in the head of the HTML page:
 <script src="jsoneditor/dist/jsoneditor.min.js"></script>
 ```
 
+Here you'll have to change the urls `jsoneditor/dist/jsoneditor.min.js` and `jsoneditor/dist/jsoneditor.min.css` to match the place where you've downloaded the library, or fill in the URL of the CDN you're using.
+
 ## Use
 
-In the body, create an div element with an id and a size:
+In the body, create a div element with an id and a size:
 
 ```html
 <div id="jsoneditor" style="width: 400px; height: 400px;"></div>
@@ -70,10 +63,10 @@ var json = editor.get();
 
 ```html
 <!DOCTYPE HTML>
-<html>
+<html lang="en">
 <head>
     <!-- when using the mode "code", it's important to specify charset utf-8 -->
-    <meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+    <meta charset="utf-8">
 
     <link href="jsoneditor/dist/jsoneditor.min.css" rel="stylesheet" type="text/css">
     <script src="jsoneditor/dist/jsoneditor.min.js"></script>

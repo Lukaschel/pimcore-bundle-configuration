@@ -7,6 +7,12 @@
     {
       "name": "Lukaschel",
       "email": "lukaschel33@gmail.com"
+    },
+    {
+      "name": "Michael Frank",
+      "email": "contact@phpdoctor.cc",
+      "homepage": "https://www.the-spirit-of-IT.com/",
+      "role": "Developer"
     }
   ],
   "autoload": {
@@ -23,6 +29,12 @@
   },
   "minimum-stability": "dev",
   "require": {
-      "composer/installers": "^1.1"
+    "php": "^7.4 || ^8.0",
+    "ext-json": "*",
+    "composer/installers": "^1.9 || ^2.0",
+    "pimcore/pimcore": "^6.9 || ^10.0"
+  },
+  "require-dev": {
+    "roave/security-advisories": "dev-latest"
   }
 }

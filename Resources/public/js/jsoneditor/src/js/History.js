@@ -1,267 +1,85 @@
-'use strict';
-
-var util = require('./util');
 
 /**
- * @constructor History
- * Store action history, enables undo and redo
- * @param {JSONEditor} editor
+ * Keep track on any history, be able
+ * @param {function} onChange
+ * @param {function} calculateItemSize
+ * @param {number} limit    Maximum size of all items in history
+ * @constructor
  */
-function History (editor) {
-  this.editor = editor;
-  this.history = [];
-  this.index = -1;
+export class History {
+  constructor (onChange, calculateItemSize, limit) {
+    this.onChange = onChange
+    this.calculateItemSize = calculateItemSize || (() => 1)
+    this.limit = limit
 
-  this.clear();
+    this.items = []
+    this.index = -1
+  }
 
-  // map with all supported actions
-  this.actions = {
-    'editField': {
-      'undo': function (params) {
-        params.node.updateField(params.oldValue);
-      },
-      'redo': function (params) {
-        params.node.updateField(params.newValue);
-      }
-    },
-    'editValue': {
-      'undo': function (params) {
-        params.node.updateValue(params.oldValue);
-      },
-      'redo': function (params) {
-        params.node.updateValue(params.newValue);
-      }
-    },
-    'changeType': {
-      'undo': function (params) {
-        params.node.changeType(params.oldType);
-      },
-      'redo': function (params) {
-        params.node.changeType(params.newType);
-      }
-    },
-
-    'appendNodes': {
-      'undo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.removeChild(node);
-        });
-      },
-      'redo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.appendChild(node);
-        });
-      }
-    },
-    'insertBeforeNodes': {
-      'undo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.removeChild(node);
-        });
-      },
-      'redo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.insertBefore(node, params.beforeNode);
-        });
-      }
-    },
-    'insertAfterNodes': {
-      'undo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.removeChild(node);
-        });
-      },
-      'redo': function (params) {
-        var afterNode = params.afterNode;
-        params.nodes.forEach(function (node) {
-          params.parent.insertAfter(params.node, afterNode);
-          afterNode = node;
-        });
-      }
-    },
-    'removeNodes': {
-      'undo': function (params) {
-        var parent = params.parent;
-        var beforeNode = parent.childs[params.index] || parent.append;
-        params.nodes.forEach(function (node) {
-          parent.insertBefore(node, beforeNode);
-        });
-      },
-      'redo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.removeChild(node);
-        });
-      }
-    },
-    'duplicateNodes': {
-      'undo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.parent.removeChild(node);
-        });
-      },
-      'redo': function (params) {
-        var afterNode = params.afterNode;
-        params.nodes.forEach(function (node) {
-          params.parent.insertAfter(node, afterNode);
-          afterNode = node;
-        });
-      }
-    },
-    'moveNodes': {
-      'undo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.oldBeforeNode.parent.moveBefore(node, params.oldBeforeNode);
-        });
-      },
-      'redo': function (params) {
-        params.nodes.forEach(function (node) {
-          params.newBeforeNode.parent.moveBefore(node, params.newBeforeNode);
-        });
-      }
-    },
-
-    'sort': {
-      'undo': function (params) {
-        var node = params.node;
-        node.hideChilds();
-        node.childs = params.oldChilds;
-        node._updateDomIndexes();
-        node.showChilds();
-      },
-      'redo': function (params) {
-        var node = params.node;
-        node.hideChilds();
-        node.childs = params.newChilds;
-        node._updateDomIndexes();
-        node.showChilds();
-      }
+  add (item) {
+    // limit number of items in history so that the total size doesn't
+    // always keep at least one item in memory
+    while (this._calculateHistorySize() > this.limit && this.items.length > 1) {
+      this.items.shift()
+      this.index--
     }
 
-    // TODO: restore the original caret position and selection with each undo
-    // TODO: implement history for actions "expand", "collapse", "scroll", "setDocument"
-  };
+    // cleanup any redo action that are not valid anymore
+    this.items = this.items.slice(0, this.index + 1)
+
+    this.items.push(item)
+    this.index++
+
+    this.onChange()
+  }
+
+  _calculateHistorySize () {
+    const calculateItemSize = this.calculateItemSize
+    let totalSize = 0
+
+    this.items.forEach(item => {
+      totalSize += calculateItemSize(item)
+    })
+
+    return totalSize
+  }
+
+  undo () {
+    if (!this.canUndo()) {
+      return
+    }
+
+    this.index--
+
+    this.onChange()
+
+    return this.items[this.index]
+  }
+
+  redo () {
+    if (!this.canRedo()) {
+      return
+    }
+
+    this.index++
+
+    this.onChange()
+
+    return this.items[this.index]
+  }
+
+  canUndo () {
+    return this.index > 0
+  }
+
+  canRedo () {
+    return this.index < this.items.length - 1
+  }
+
+  clear () {
+    this.items = []
+    this.index = -1
+
+    this.onChange()
+  }
 }
-
-/**
- * The method onChange is executed when the History is changed, and can
- * be overloaded.
- */
-History.prototype.onChange = function () {};
-
-/**
- * Add a new action to the history
- * @param {String} action  The executed action. Available actions: "editField",
- *                         "editValue", "changeType", "appendNode",
- *                         "removeNode", "duplicateNode", "moveNode"
- * @param {Object} params  Object containing parameters describing the change.
- *                         The parameters in params depend on the action (for
- *                         example for "editValue" the Node, old value, and new
- *                         value are provided). params contains all information
- *                         needed to undo or redo the action.
- */
-History.prototype.add = function (action, params) {
-  this.index++;
-  this.history[this.index] = {
-    'action': action,
-    'params': params,
-    'timestamp': new Date()
-  };
-
-  // remove redo actions which are invalid now
-  if (this.index < this.history.length - 1) {
-    this.history.splice(this.index + 1, this.history.length - this.index - 1);
-  }
-
-  // fire onchange event
-  this.onChange();
-};
-
-/**
- * Clear history
- */
-History.prototype.clear = function () {
-  this.history = [];
-  this.index = -1;
-
-  // fire onchange event
-  this.onChange();
-};
-
-/**
- * Check if there is an action available for undo
- * @return {Boolean} canUndo
- */
-History.prototype.canUndo = function () {
-  return (this.index >= 0);
-};
-
-/**
- * Check if there is an action available for redo
- * @return {Boolean} canRedo
- */
-History.prototype.canRedo = function () {
-  return (this.index < this.history.length - 1);
-};
-
-/**
- * Undo the last action
- */
-History.prototype.undo = function () {
-  if (this.canUndo()) {
-    var obj = this.history[this.index];
-    if (obj) {
-      var action = this.actions[obj.action];
-      if (action && action.undo) {
-        action.undo(obj.params);
-        if (obj.params.oldSelection) {
-          this.editor.setDomSelection(obj.params.oldSelection);
-        }
-      }
-      else {
-        console.error(new Error('unknown action "' + obj.action + '"'));
-      }
-    }
-    this.index--;
-
-    // fire onchange event
-    this.onChange();
-  }
-};
-
-/**
- * Redo the last action
- */
-History.prototype.redo = function () {
-  if (this.canRedo()) {
-    this.index++;
-
-    var obj = this.history[this.index];
-    if (obj) {
-      var action = this.actions[obj.action];
-      if (action && action.redo) {
-        action.redo(obj.params);
-        if (obj.params.newSelection) {
-          this.editor.setDomSelection(obj.params.newSelection);
-        }
-      }
-      else {
-        console.error(new Error('unknown action "' + obj.action + '"'));
-      }
-    }
-
-    // fire onchange event
-    this.onChange();
-  }
-};
-
-/**
- * Destroy history
- */
-History.prototype.destroy = function () {
-  this.editor = null;
-
-  this.history = [];
-  this.index = -1;
-};
-
-module.exports = History;
